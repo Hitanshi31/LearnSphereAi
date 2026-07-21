@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.npm-cache/
+work/verification/
+.env
+.env.local
+backend/data/
+backend/.deps/
+backend/.venv/
+.pip-cache/
