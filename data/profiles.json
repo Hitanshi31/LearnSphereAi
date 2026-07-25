@@ -1,0 +1,46 @@
+{
+  "alex": {
+    "topics": {
+      "Earth & Planetary Science": {
+        "attempts": 6,
+        "correct": 4,
+        "confidence_total": 24,
+        "misconception_count": 1
+      },
+      "Thermodynamics & Energy": {
+        "attempts": 4,
+        "correct": 3,
+        "confidence_total": 16,
+        "misconception_count": 0
+      },
+      "Quantum Mechanics Basics": {
+        "attempts": 5,
+        "correct": 2,
+        "confidence_total": 21,
+        "misconception_count": 2
+      }
+    },
+    "recent_misconceptions": [
+      {
+        "id": "m-seasons-01",
+        "topic": "Earth & Planetary Science",
+        "label": "Distance-to-Sun Season Fallacy",
+        "why": "You selected distance from the Sun as the primary cause of summer/winter. This is a common intuitive bias because heat sources feel warmer when closer.",
+        "common_intuition": "Earth is physically closer to the Sun during summer and farther during winter.",
+        "scientific_reality": "Earth's 23.5\u00b0 axial tilt causes sunlight to hit hemisphere angles directly (summer) vs spread out (winter). Distance variation is negligible.",
+        "correction": "Seasons are caused by Earth's axial tilt changing the angle and duration of solar insolation.",
+        "verification_check": "If orbital distance caused seasons, what would happen in Australia when it is summer in the USA?",
+        "verification_options": [
+          "Australia would also be in summer (both hemispheres simultaneously warm)",
+          "Australia would be in winter (hemispheres have opposite seasons)",
+          "Australia would experience no seasonal changes",
+          "Australia's seasons would lag by 6 months"
+        ],
+        "verification_correct_index": 0,
+        "created_at": "2026-07-21 17:39"
+      }
+    ],
+    "attempt_history": [],
+    "updated_at": "2026-07-21T17:39:41.807041+00:00"
+  }
+}

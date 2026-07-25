@@ -6,9 +6,10 @@ import {
   askStudyQuestion,
   generateNotes,
   generateQuiz,
+  getDocument,
   getLearningProfile,
+  listDocuments,
   submitAttempt,
-  uploadDocument,
   type Citation,
   type KeyConcept,
   type LearningProfile,
@@ -21,8 +22,8 @@ import {
 
 const learnerId = "alex";
 
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <section className={`card ${className}`}>{children}</section>;
+function Card({ children, className = "", style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
+  return <section className={`card ${className}`} style={style}>{children}</section>;
 }
 
 function Ring({ value, label = "mastery" }: { value: number; label?: string }) {
@@ -41,17 +42,46 @@ function Ring({ value, label = "mastery" }: { value: number; label?: string }) {
   );
 }
 
+function StatusBadge({ status }: { status: string }) {
+  const styles: Record<string, React.CSSProperties> = {
+    ready: { background: "#d1fae5", color: "#065f46" },
+    processing: { background: "#fef3c7", color: "#92400e" },
+    failed: { background: "#fee2e2", color: "#991b1b" },
+  };
+  const s = styles[status] ?? styles.ready;
+  return (
+    <span
+      style={{
+        ...s,
+        fontSize: "10px",
+        fontWeight: 700,
+        letterSpacing: "0.6px",
+        textTransform: "uppercase",
+        padding: "3px 8px",
+        borderRadius: "20px",
+        display: "inline-block",
+      }}
+    >
+      {status}
+    </span>
+  );
+}
+
 export function LearningDashboard() {
   const [nav, setNav] = useState("Overview");
   const [documentId, setDocumentId] = useState<string>();
   const [documentName, setDocumentName] = useState<string>("");
   const [docDetails, setDocDetails] = useState<UploadedDocument | null>(null);
+  const [documentList, setDocumentList] = useState<UploadedDocument[]>([]);
   const [profile, setProfile] = useState<LearningProfile>();
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<StudyAnswer>();
   const [notes, setNotes] = useState<StudyNotes>();
   const [quiz, setQuiz] = useState<Quiz>();
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedChoice, setSelectedChoice] = useState<number>();
+  const [submittedIndexes, setSubmittedIndexes] = useState<Set<number>>(new Set());
+  const [quizResults, setQuizResults] = useState<Array<{ correct: boolean; choice: number }>>([]);
   const [confidence, setConfidence] = useState<number>(4);
   const [insight, setInsight] = useState<MisconceptionInsight>();
   const [activeRepairModal, setActiveRepairModal] = useState<MisconceptionInsight | null>(null);
@@ -59,7 +89,7 @@ export function LearningDashboard() {
   const [verificationResult, setVerificationResult] = useState<string>("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const refreshProfile = async () => {
@@ -71,9 +101,71 @@ export function LearningDashboard() {
     }
   };
 
+  const refreshDocumentList = async () => {
+    try {
+      const docs = await listDocuments();
+      setDocumentList(docs);
+    } catch {
+      // Silently ignore if backend is not connected
+    }
+  };
+
   useEffect(() => {
     refreshProfile();
+    refreshDocumentList();
   }, []);
+
+  // ----------------------------------------------------------------
+  // Poll for document processing completion via useEffect interval.
+  // Fires every 2s whenever docDetails.status === 'processing'.
+  // The upload handler returns immediately — this effect drives updates.
+  // ----------------------------------------------------------------
+  useEffect(() => {
+    if (!documentId || docDetails?.status !== "processing") return;
+
+    const statusMessages = [
+      "📄 Extracting text from pages...",
+      "✂️ Chunking pages into searchable segments...",
+      "🤖 Loading AI embedding model (first run ~30s)...",
+      "🔢 Generating BGE vector embeddings...",
+      "🗄️ Indexing chunks into ChromaDB...",
+      "⏳ Almost done — finalising index...",
+    ];
+    let count = 0;
+
+    const interval = setInterval(async () => {
+      // Rotate status message every tick
+      setStatus(statusMessages[count % statusMessages.length]);
+      count++;
+
+      try {
+        const polled = await getDocument(documentId);
+        setDocDetails(polled);
+
+        if (polled.status === "ready") {
+          clearInterval(interval);
+          setDocumentName(polled.filename);
+          setStatus(
+            `✓ ${polled.filename} indexed — ${polled.page_count} pages, ${polled.chunk_count} chunks, ${polled.extracted_characters.toLocaleString()} chars.`
+          );
+          // Refresh document list
+          refreshDocumentList();
+          // Auto-generate notes
+          generateNotes(polled.id)
+            .then(setNotes)
+            .catch(() => {});
+        } else if (polled.status === "failed") {
+          clearInterval(interval);
+          setStatus(`❌ Processing failed: ${polled.error ?? "Unknown error"}`);
+        }
+      } catch {
+        // Network blip — keep polling
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentId, docDetails?.status]);
 
   const handleFileUpload = async (file: File) => {
     if (!file || !file.name.toLowerCase().endsWith(".pdf")) {
@@ -81,37 +173,67 @@ export function LearningDashboard() {
       return;
     }
     setBusy(true);
-    setUploadProgress(true);
-    setStatus(`Processing ${file.name}... extracting text & generating BGE embeddings.`);
+    setStatus(`Uploading ${file.name}...`);
     try {
+      const { uploadDocument } = await import("@/lib/documents-api");
+      // Backend returns immediately with status="processing" — heavy work runs in background
       const doc = await uploadDocument(file);
+
+      // Set state so the polling useEffect kicks in automatically
       setDocumentId(doc.id);
       setDocumentName(doc.filename);
-      setDocDetails(doc);
+      setDocDetails(doc);         // status = "processing" → triggers the polling effect
       setAnswer(undefined);
+      setNotes(undefined);
       setQuiz(undefined);
-      
-      setStatus(`${doc.filename} indexed — ${doc.page_count} pages, ${doc.chunk_count} chunks, ${doc.extracted_characters} characters.`);
-      
-      // Auto-generate Summary & Study Notes on upload
-      try {
-        const generatedNotes = await generateNotes(doc.id);
-        setNotes(generatedNotes);
-      } catch (err) {
-        console.log("Notes generation notice:", err);
-      }
+      setCurrentQuestionIndex(0);
+      setSubmittedIndexes(new Set());
+      setQuizResults([]);
+      setStatus("📄 PDF received — extracting text and generating embeddings...");
+
+      // Immediately show in document list
+      refreshDocumentList();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Upload failed.");
+      setStatus(error instanceof Error ? error.message : "Upload failed. Is the backend running?");
     } finally {
+      // Release the upload button right away — polling runs independently
       setBusy(false);
-      setUploadProgress(false);
     }
   };
 
-  const upload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
     if (file) handleFileUpload(file);
-    event.target.value = "";
+  };
+
+  const activateDocument = (doc: UploadedDocument) => {
+    if (doc.status !== "ready") {
+      setStatus(`"${doc.filename}" is not ready yet (status: ${doc.status}).`);
+      return;
+    }
+    setDocumentId(doc.id);
+    setDocumentName(doc.filename);
+    setDocDetails(doc);
+    setAnswer(undefined);
+    setNotes(undefined);
+    setQuiz(undefined);
+    setCurrentQuestionIndex(0);
+    setSubmittedIndexes(new Set());
+    setQuizResults([]);
+    setStatus(`Switched to "${doc.filename}" — ${doc.page_count} pages, ${doc.chunk_count} chunks.`);
   };
 
   const ask = async (event: React.FormEvent) => {
@@ -152,7 +274,10 @@ export function LearningDashboard() {
     try {
       const res = await generateQuiz(documentId);
       setQuiz(res);
+      setCurrentQuestionIndex(0);
       setSelectedChoice(undefined);
+      setSubmittedIndexes(new Set());
+      setQuizResults([]);
       setStatus("Diagnostic quiz generated!");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not create a quiz.");
@@ -162,7 +287,7 @@ export function LearningDashboard() {
   };
 
   const submitQuizAttempt = async () => {
-    const currentQ = quiz?.questions[0];
+    const currentQ = quiz?.questions[currentQuestionIndex];
     if (!currentQ || selectedChoice === undefined) return;
     setBusy(true);
     setStatus("");
@@ -179,6 +304,13 @@ export function LearningDashboard() {
       });
 
       setProfile(result.profile);
+      setSubmittedIndexes((prev) => new Set([...prev, currentQuestionIndex]));
+      setQuizResults((prev) => {
+        const updated = [...prev];
+        updated[currentQuestionIndex] = { correct: isCorrect, choice: selectedChoice };
+        return updated;
+      });
+
       if (result.misconception) {
         setInsight(result.misconception);
         setStatus("Misconception detected! Your profile was updated with targeted learning insights.");
@@ -194,6 +326,17 @@ export function LearningDashboard() {
     }
   };
 
+  const goToNextQuestion = () => {
+    if (!quiz) return;
+    const nextIndex = currentQuestionIndex + 1;
+    if (nextIndex < quiz.questions.length) {
+      setCurrentQuestionIndex(nextIndex);
+      setSelectedChoice(undefined);
+      setConfidence(4);
+      setStatus("");
+    }
+  };
+
   const handleVerificationCheck = () => {
     if (!activeRepairModal || verificationChoice === undefined) return;
     if (verificationChoice === activeRepairModal.verification_correct_index) {
@@ -206,6 +349,9 @@ export function LearningDashboard() {
 
   const activeInsight = insight ?? profile?.recent_misconceptions[0];
   const navItems = ["Overview", "My materials", "Study notes", "Practice", "Learning profile"];
+
+  const allQuestionsAnswered = quiz && submittedIndexes.size === quiz.questions.length;
+  const quizScore = quizResults.filter((r) => r?.correct).length;
 
   return (
     <main className="shell">
@@ -249,17 +395,43 @@ export function LearningDashboard() {
               className="file-input"
               type="file"
               accept="application/pdf"
-              onChange={upload}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = ""; }}
             />
             <button
               className="upload"
               disabled={busy}
               onClick={() => fileInput.current?.click()}
             >
-              {uploadProgress ? "Processing PDF..." : busy ? "Working..." : "+ Upload PDF"}
+              {busy ? "Uploading..." : "+ Upload PDF"}
             </button>
           </div>
         </header>
+
+        {/* Processing banner — visible while backend indexes the PDF */}
+        {docDetails?.status === "processing" && (
+          <div
+            style={{
+              background: "linear-gradient(90deg, #f0efff, #e8f4ff)",
+              border: "1px solid #c5bdfc",
+              borderRadius: "12px",
+              padding: "14px 20px",
+              marginBottom: "22px",
+              display: "flex",
+              alignItems: "center",
+              gap: "12px",
+            }}
+          >
+            <span style={{ fontSize: "22px", animation: "spin 2s linear infinite", display: "inline-block" }}>⚙️</span>
+            <div>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: "13px", color: "#3730a3" }}>
+                Indexing {documentName}...
+              </p>
+              <p style={{ margin: 0, fontSize: "12px", color: "#6366f1" }}>
+                {status || "Processing PDF — extracting text and generating embeddings..."}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* TAB 1: OVERVIEW */}
         {nav === "Overview" && (
@@ -281,7 +453,7 @@ export function LearningDashboard() {
               </Card>
 
               <Card className="next-card">
-                <p className="eyebrow">FEATURE 1 ACTION</p>
+                <p className="eyebrow">QUICK ACTION</p>
                 <h3>
                   {documentName ? `${documentName}` : "Upload your study PDF"}
                 </h3>
@@ -367,35 +539,43 @@ export function LearningDashboard() {
           </>
         )}
 
-        {/* TAB 2: MY MATERIALS (FEATURE 1 UPLOADING) */}
+        {/* TAB 2: MY MATERIALS */}
         {nav === "My materials" && (
           <div>
             <Card className="ask">
               <h3>PDF Document Upload & Indexing</h3>
               <p>Upload any PDF textbook, paper, or notes. PyMuPDF extracts text and indexes chunks into ChromaDB with BGE embeddings.</p>
 
+              {/* Drag-and-Drop Upload Zone */}
               <div
                 style={{
-                  border: "2px dashed #d9d6f8",
+                  border: `2px dashed ${isDragOver ? "#6255ef" : "#d9d6f8"}`,
                   borderRadius: "12px",
                   padding: "36px 20px",
                   textAlign: "center",
-                  background: "#f9f8fe",
+                  background: isDragOver ? "#f0efff" : "#f9f8fe",
                   cursor: "pointer",
                   marginTop: "16px",
-                  transition: "all 0.15s ease",
+                  transition: "all 0.18s ease",
+                  transform: isDragOver ? "scale(1.01)" : "scale(1)",
                 }}
                 onClick={() => fileInput.current?.click()}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
               >
-                <div style={{ fontSize: "32px", marginBottom: "8px" }}>📄</div>
-                <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: "#564ad9", fontWeight: "700" }}>
-                  {busy ? "Processing PDF document..." : "Click to select or drop a PDF file here"}
+                <div style={{ fontSize: "32px", marginBottom: "8px" }}>
+                  {isDragOver ? "📂" : "📄"}
+                </div>
+                <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: isDragOver ? "#6255ef" : "#564ad9", fontWeight: "700" }}>
+                  {busy ? "Processing PDF document..." : isDragOver ? "Drop to upload!" : "Click to select or drag & drop a PDF file here"}
                 </h4>
                 <p style={{ margin: 0, fontSize: "12px", color: "#85889a" }}>
                   Supports text-based PDF documents up to 20MB
                 </p>
               </div>
 
+              {/* Active document badge */}
               {documentName && (
                 <div
                   style={{
@@ -429,10 +609,65 @@ export function LearningDashboard() {
                 </div>
               )}
             </Card>
+
+            {/* Document History */}
+            {documentList.length > 0 && (
+              <Card className="ask" style={{ marginTop: "18px" }}>
+                <h3>Previously Uploaded Documents</h3>
+                <p>All documents indexed this session and from previous sessions.</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "12px" }}>
+                  {documentList.map((doc) => (
+                    <div
+                      key={doc.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "14px 16px",
+                        background: documentId === doc.id ? "#f0efff" : "#f8f8fd",
+                        border: `1px solid ${documentId === doc.id ? "#c5bdfc" : "#e5e5f0"}`,
+                        borderRadius: "10px",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                          <span style={{ fontSize: "14px", fontWeight: "600", color: "#202236", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            📄 {doc.filename}
+                          </span>
+                          <StatusBadge status={doc.status} />
+                          {documentId === doc.id && (
+                            <span style={{ fontSize: "10px", fontWeight: 700, color: "#564ad9", background: "#e9e7ff", padding: "2px 7px", borderRadius: "20px" }}>
+                              ACTIVE
+                            </span>
+                          )}
+                        </div>
+                        <p style={{ margin: 0, fontSize: "12px", color: "#85889a" }}>
+                          {doc.status === "ready"
+                            ? `${doc.page_count} pages · ${doc.chunk_count} chunks · ${doc.extracted_characters.toLocaleString()} chars`
+                            : doc.status === "failed"
+                            ? "Processing failed — try re-uploading"
+                            : "Processing..."}
+                        </p>
+                      </div>
+                      {doc.status === "ready" && documentId !== doc.id && (
+                        <button
+                          className="primary"
+                          style={{ marginLeft: "12px", flexShrink: 0, padding: "8px 14px", fontSize: "12px" }}
+                          onClick={() => activateDocument(doc)}
+                        >
+                          Use this →
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
           </div>
         )}
 
-        {/* TAB 3: STUDY NOTES (FEATURE 1 SUMMARY GENERATION) */}
+        {/* TAB 3: STUDY NOTES */}
         {nav === "Study notes" && (
           <Card className="ask">
             <h3>AI Summary & Grounded Study Notes</h3>
@@ -489,7 +724,7 @@ export function LearningDashboard() {
           </Card>
         )}
 
-        {/* TAB 4: PRACTICE (DIAGNOSTIC QUIZ) */}
+        {/* TAB 4: PRACTICE — Full multi-question quiz */}
         {nav === "Practice" && (
           <Card className="ask">
             <h3>Diagnostic practice</h3>
@@ -504,22 +739,101 @@ export function LearningDashboard() {
               </p>
             )}
 
-            {quiz?.questions[0] && (
+            {/* Quiz completed summary */}
+            {quiz && allQuestionsAnswered && (
+              <div
+                style={{
+                  marginTop: "20px",
+                  padding: "20px 24px",
+                  background: "linear-gradient(120deg, #f0efff, #f0fff4)",
+                  border: "1px solid #c5bdfc",
+                  borderRadius: "12px",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: "36px", marginBottom: "8px" }}>
+                  {quizScore === quiz.questions.length ? "🎉" : quizScore >= quiz.questions.length / 2 ? "👍" : "📚"}
+                </div>
+                <h3 style={{ color: "#202236", marginBottom: "6px" }}>
+                  Quiz complete! {quizScore}/{quiz.questions.length} correct
+                </h3>
+                <p style={{ color: "#666a7c", fontSize: "13px", margin: 0 }}>
+                  {quizScore === quiz.questions.length
+                    ? "Excellent! Perfect score — your mastery is rising."
+                    : quizScore >= quiz.questions.length / 2
+                    ? "Good effort! Review the incorrect answers in your Learning Profile."
+                    : "Keep practicing — your profile will adapt to help you improve."}
+                </p>
+                <button
+                  className="primary"
+                  style={{ marginTop: "16px" }}
+                  onClick={loadQuiz}
+                  disabled={busy}
+                >
+                  Try a new quiz →
+                </button>
+              </div>
+            )}
+
+            {/* Active question */}
+            {quiz?.questions[currentQuestionIndex] && !allQuestionsAnswered && (
               <div className="study-answer">
-                <b>DIAGNOSTIC QUESTION 1</b>
+                {/* Progress indicator */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                  <b>QUESTION {currentQuestionIndex + 1} OF {quiz.questions.length}</b>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    {quiz.questions.map((_, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          width: "28px",
+                          height: "6px",
+                          borderRadius: "3px",
+                          background: submittedIndexes.has(i)
+                            ? (quizResults[i]?.correct ? "#22c55e" : "#ef4444")
+                            : i === currentQuestionIndex
+                            ? "#6255ef"
+                            : "#e5e5f0",
+                          transition: "background 0.2s ease",
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
                 <p style={{ fontSize: "14px", fontWeight: "600", color: "#202236" }}>
-                  {quiz.questions[0].question}
+                  {quiz.questions[currentQuestionIndex].question}
                 </p>
 
-                {quiz.questions[0].choices.map((choice, index) => (
-                  <button
-                    key={choice}
-                    className={selectedChoice === index ? "choice selected" : "choice"}
-                    onClick={() => setSelectedChoice(index)}
-                  >
-                    {choice}
-                  </button>
-                ))}
+                {quiz.questions[currentQuestionIndex].choices.map((choice, index) => {
+                  const isSubmitted = submittedIndexes.has(currentQuestionIndex);
+                  const thisResult = quizResults[currentQuestionIndex];
+                  const correctIdx = quiz.questions[currentQuestionIndex].answer_index;
+                  let extraStyle: React.CSSProperties = {};
+                  if (isSubmitted) {
+                    if (index === correctIdx) extraStyle = { background: "#f0fff4", borderColor: "#22c55e", color: "#15803d" };
+                    else if (index === thisResult?.choice && !thisResult?.correct) extraStyle = { background: "#fff5f5", borderColor: "#ef4444", color: "#b91c1c" };
+                  }
+                  return (
+                    <button
+                      key={choice}
+                      className={selectedChoice === index && !isSubmitted ? "choice selected" : "choice"}
+                      style={extraStyle}
+                      onClick={() => !isSubmitted && setSelectedChoice(index)}
+                      disabled={isSubmitted}
+                    >
+                      {choice}
+                    </button>
+                  );
+                })}
+
+                {/* Show explanation after submission */}
+                {submittedIndexes.has(currentQuestionIndex) && (
+                  <div style={{ marginTop: "12px", padding: "12px 16px", background: "#f7f6ff", borderRadius: "9px", fontSize: "13px", color: "#565a6d" }}>
+                    <strong style={{ color: "#564ad9", fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase" }}>Explanation</strong>
+                    <p style={{ margin: "6px 0 0" }}>{quiz.questions[currentQuestionIndex].explanation}</p>
+                  </div>
+                )}
 
                 <p className="eyebrow" style={{ marginTop: "16px" }}>
                   HOW CONFIDENT ARE YOU IN THIS REASONING?
@@ -530,19 +844,29 @@ export function LearningDashboard() {
                       key={lvl}
                       className={confidence === lvl ? "confidence-btn active" : "confidence-btn"}
                       onClick={() => setConfidence(lvl)}
+                      disabled={submittedIndexes.has(currentQuestionIndex)}
                     >
                       {lvl === 1 ? "1 (Guess)" : lvl === 5 ? "5 (Certain)" : `${lvl}`}
                     </button>
                   ))}
                 </div>
 
-                <button
-                  className="primary submit-attempt"
-                  disabled={busy || selectedChoice === undefined}
-                  onClick={submitQuizAttempt}
-                >
-                  Check my reasoning
-                </button>
+                {!submittedIndexes.has(currentQuestionIndex) ? (
+                  <button
+                    className="primary submit-attempt"
+                    disabled={busy || selectedChoice === undefined}
+                    onClick={submitQuizAttempt}
+                  >
+                    Check my reasoning
+                  </button>
+                ) : currentQuestionIndex < quiz.questions.length - 1 ? (
+                  <button
+                    className="primary submit-attempt"
+                    onClick={goToNextQuestion}
+                  >
+                    Next Question → ({currentQuestionIndex + 2} of {quiz.questions.length})
+                  </button>
+                ) : null}
               </div>
             )}
           </Card>
@@ -551,7 +875,7 @@ export function LearningDashboard() {
         {/* TAB 5: LEARNING PROFILE */}
         {nav === "Learning profile" && (
           <div>
-            <div className="top-grid">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "17px" }}>
               <Card className="profile-card">
                 <div>
                   <p className="eyebrow">OVERALL MASTERY</p>
@@ -568,6 +892,15 @@ export function LearningDashboard() {
                   <p className="muted">How accurately confidence matches correctness</p>
                 </div>
                 <Ring value={profile?.confidence_alignment ?? 85} label="calibrated" />
+              </Card>
+
+              <Card className="profile-card">
+                <div>
+                  <p className="eyebrow">ACCURACY RATE</p>
+                  <h2>{profile?.accuracy_rate ?? 0}%</h2>
+                  <p className="muted">{profile?.total_attempts ?? 0} total quiz attempts recorded</p>
+                </div>
+                <Ring value={profile?.accuracy_rate ?? 0} label="accuracy" />
               </Card>
             </div>
 
@@ -590,10 +923,114 @@ export function LearningDashboard() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <p className="muted">No topics recorded yet.</p>
+                  <p className="muted">No topics recorded yet. Take a quiz to populate your profile.</p>
                 )}
               </div>
             </Card>
+
+            {/* Recent Misconceptions */}
+            {profile?.recent_misconceptions && profile.recent_misconceptions.length > 0 && (
+              <>
+                <div className="section-heading">
+                  <div>
+                    <h2>Recent misconceptions</h2>
+                    <p>AI-detected knowledge gaps from your quiz attempts.</p>
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {profile.recent_misconceptions.map((m) => (
+                    <Card key={m.id} className="ask" style={{ marginTop: 0 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div style={{ flex: 1 }}>
+                          <p className="eyebrow" style={{ color: "#e53e3e" }}>{m.topic}</p>
+                          <h3 style={{ margin: "2px 0 6px", color: "#202236" }}>{m.label}</h3>
+                          <p style={{ margin: 0, fontSize: "13px", color: "#666a7c", lineHeight: "1.5" }}>{m.why}</p>
+                          <p style={{ margin: "8px 0 0", fontSize: "11px", color: "#9396a6" }}>{m.created_at}</p>
+                        </div>
+                        <button
+                          className="primary"
+                          style={{ marginLeft: "16px", flexShrink: 0, padding: "8px 14px", fontSize: "12px" }}
+                          onClick={() => {
+                            setActiveRepairModal(m);
+                            setVerificationChoice(undefined);
+                            setVerificationResult("");
+                          }}
+                        >
+                          Repair →
+                        </button>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* Attempt History */}
+            {profile?.attempt_history && profile.attempt_history.length > 0 && (
+              <>
+                <div className="section-heading">
+                  <div>
+                    <h2>Attempt history</h2>
+                    <p>Your last {Math.min(profile.attempt_history.length, 30)} diagnostic quiz attempts.</p>
+                  </div>
+                </div>
+                <Card className="ask">
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #eeeef3" }}>
+                          <th style={{ textAlign: "left", padding: "8px 10px", color: "#9294a6", fontWeight: 700, fontSize: "10px", letterSpacing: "0.8px", textTransform: "uppercase" }}>TOPIC</th>
+                          <th style={{ textAlign: "left", padding: "8px 10px", color: "#9294a6", fontWeight: 700, fontSize: "10px", letterSpacing: "0.8px", textTransform: "uppercase" }}>RESULT</th>
+                          <th style={{ textAlign: "left", padding: "8px 10px", color: "#9294a6", fontWeight: 700, fontSize: "10px", letterSpacing: "0.8px", textTransform: "uppercase" }}>CONFIDENCE</th>
+                          <th style={{ textAlign: "left", padding: "8px 10px", color: "#9294a6", fontWeight: 700, fontSize: "10px", letterSpacing: "0.8px", textTransform: "uppercase" }}>TIME</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {profile.attempt_history.map((a) => (
+                          <tr key={a.id} style={{ borderBottom: "1px solid #f2f2f6" }}>
+                            <td style={{ padding: "10px", color: "#34374c", fontWeight: 600, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.topic}</td>
+                            <td style={{ padding: "10px" }}>
+                              <span style={{
+                                background: a.is_correct ? "#d1fae5" : "#fee2e2",
+                                color: a.is_correct ? "#065f46" : "#991b1b",
+                                padding: "2px 8px",
+                                borderRadius: "20px",
+                                fontSize: "10px",
+                                fontWeight: 700,
+                                textTransform: "uppercase"
+                              }}>
+                                {a.is_correct ? "Correct" : "Incorrect"}
+                              </span>
+                            </td>
+                            <td style={{ padding: "10px" }}>
+                              <div style={{ display: "flex", gap: "3px" }}>
+                                {[1,2,3,4,5].map(n => (
+                                  <div key={n} style={{ width: "6px", height: "6px", borderRadius: "50%", background: n <= a.confidence ? "#6255ef" : "#e5e5f0" }} />
+                                ))}
+                              </div>
+                            </td>
+                            <td style={{ padding: "10px", color: "#9294a6" }}>{a.timestamp}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              </>
+            )}
+
+            {!profile?.attempt_history?.length && !profile?.topics?.length && (
+              <Card className="ask" style={{ marginTop: "18px", textAlign: "center", padding: "40px 24px" }}>
+                <div style={{ fontSize: "36px", marginBottom: "12px" }}>📊</div>
+                <h3 style={{ color: "#202236" }}>Your learning profile is ready</h3>
+                <p style={{ color: "#85889a", maxWidth: "380px", margin: "0 auto 16px" }}>
+                  Upload a PDF and complete a diagnostic quiz to start building your personalized learning profile.
+                </p>
+                <button className="primary" onClick={() => setNav("Practice")}>
+                  Start a diagnostic quiz →
+                </button>
+              </Card>
+            )}
           </div>
         )}
 

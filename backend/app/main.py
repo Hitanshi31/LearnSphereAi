@@ -1,7 +1,9 @@
+import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
-from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
@@ -34,7 +36,26 @@ study_service = GroundedStudyService(VectorIndex(settings), gemini_client)
 profile_store = LearningProfileStore()
 misconception_detector = MisconceptionDetector(gemini_client)
 
-app = FastAPI(title="LearnSphere AI", version="0.1.0")
+
+# ------------------------------------------------------------------ #
+# Startup: pre-warm the embedding model in background so first upload
+# doesn't stall waiting for the BGE model to download & load.
+# ------------------------------------------------------------------ #
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    def _warm_model():
+        try:
+            print("[LearnSphere] Pre-loading BGE embedding model...")
+            study_service.vector_index._embed(["LearnSphere AI warmup"])
+            print("[LearnSphere] Embedding model ready.")
+        except Exception as exc:
+            print(f"[LearnSphere] Model warmup notice (non-fatal): {exc}")
+
+    threading.Thread(target=_warm_model, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="LearnSphere AI", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
@@ -84,15 +105,15 @@ def serialize_profile(learner_id: str) -> LearningProfile:
         )
         for topic, state in learner.topics.items()
     ]
-    
+
     total_attempts = sum(t.attempts for t in topics)
     total_correct = sum(t.correct for t in topics)
     overall_accuracy = round((total_correct / total_attempts) * 100) if total_attempts else 0
     overall_mastery = round(sum(topic.mastery for topic in topics) / len(topics)) if topics else 0
-    
-    confidence_alignment_avg = round(
-        sum(100 - abs(int(t.confidence * 20) - round((t.correct / t.attempts) * 100)) for t in topics if t.attempts) / len(topics)
-    ) if topics else 0
+
+    confidence_alignment_avg = max(0, round(
+        sum(max(0, 100 - abs(int(t.confidence * 20) - round((t.correct / t.attempts) * 100))) for t in topics if t.attempts) / len(topics)
+    )) if topics else 0
 
     return LearningProfile(
         learner_id=learner_id,
@@ -167,8 +188,39 @@ def generate_quiz(document_id: str) -> QuizResponse:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
 
 
+# ------------------------------------------------------------------ #
+# Background PDF processing (runs in FastAPI thread pool after
+# the upload endpoint has already returned to the client).
+# ------------------------------------------------------------------ #
+def _process_document_task(document_id: str, saved_path: Path) -> None:
+    """Extract text, chunk, and index into ChromaDB. Runs off the request thread."""
+    try:
+        print(f"[LearnSphere] Processing {saved_path.name}...")
+        processed = processor.process(saved_path)
+        if not processed.chunks:
+            raise ValueError("No selectable text found. Try an OCR-enabled PDF.")
+        chunks = [
+            ChunkPreview(
+                id=f"{document_id}:{index}",
+                page_number=chunk.page_number,
+                text=chunk.text,
+                word_count=len(chunk.text.split()),
+            )
+            for index, chunk in enumerate(processed.chunks, start=1)
+        ]
+        repository.mark_ready(document_id, processed.page_count, processed.extracted_characters, chunks)
+        study_service.vector_index.index(
+            document_id,
+            [SourceChunk(id=chunk.id, page_number=chunk.page_number, text=chunk.text) for chunk in chunks],
+        )
+        print(f"[LearnSphere] Document {document_id} ready — {len(chunks)} chunks indexed.")
+    except Exception as error:
+        print(f"[LearnSphere] Document {document_id} failed: {error}")
+        repository.mark_failed(document_id, str(error))
+
+
 @app.post("/api/v1/documents", response_model=DocumentDetail, status_code=status.HTTP_201_CREATED)
-async def upload_document(file: UploadFile = File(...)) -> DocumentDetail:
+async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)) -> DocumentDetail:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Please upload a PDF file")
 
@@ -178,23 +230,14 @@ async def upload_document(file: UploadFile = File(...)) -> DocumentDetail:
     if len(content) > settings.max_upload_bytes:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="PDF exceeds the upload limit")
 
+    # Create the document record and save the file immediately
     document = repository.create(file.filename, datetime.now(timezone.utc))
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
     saved_path = settings.upload_dir / f"{uuid4()}.pdf"
     saved_path.write_bytes(content)
     repository.attach_file(document.id, saved_path)
 
-    try:
-        processed = processor.process(saved_path)
-        if not processed.chunks:
-            raise ValueError("No selectable text was found. Try an OCR-enabled PDF.")
-        chunks = [
-            ChunkPreview(id=f"{document.id}:{index}", page_number=chunk.page_number, text=chunk.text, word_count=len(chunk.text.split()))
-            for index, chunk in enumerate(processed.chunks, start=1)
-        ]
-        ready_document = repository.mark_ready(document.id, processed.page_count, processed.extracted_characters, chunks)
-        study_service.vector_index.index(document.id, [SourceChunk(id=chunk.id, page_number=chunk.page_number, text=chunk.text) for chunk in chunks])
-        return ready_document
-    except Exception as error:
-        repository.mark_failed(document.id, str(error))
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Could not process PDF: {error}") from error
+    # Kick off heavy processing in the background — return immediately to client
+    background_tasks.add_task(_process_document_task, document.id, saved_path)
+
+    return document  # Status is "processing" — client should poll GET /api/v1/documents/{id}

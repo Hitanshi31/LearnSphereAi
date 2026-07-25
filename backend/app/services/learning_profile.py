@@ -1,11 +1,15 @@
 import json
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from ..config import Settings
 from .grounded_learning import GeminiClient
+
+
+_PERSIST_FILE = Path("./data/profiles.json")
 
 
 @dataclass
@@ -33,19 +37,90 @@ class LearnerState:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+# ------------------------------------------------------------------ #
+# Serialization helpers
+# ------------------------------------------------------------------ #
+
+def _serialize_learner(state: LearnerState) -> dict:
+    return {
+        "topics": {
+            topic: {
+                "attempts": ts.attempts,
+                "correct": ts.correct,
+                "confidence_total": ts.confidence_total,
+                "misconception_count": ts.misconception_count,
+            }
+            for topic, ts in state.topics.items()
+        },
+        "recent_misconceptions": state.recent_misconceptions,
+        "attempt_history": state.attempt_history,
+        "updated_at": state.updated_at.isoformat(),
+    }
+
+
+def _deserialize_learner(data: dict) -> LearnerState:
+    topics: dict[str, TopicState] = defaultdict(TopicState)
+    for topic, ts_data in data.get("topics", {}).items():
+        topics[topic] = TopicState(
+            attempts=ts_data.get("attempts", 0),
+            correct=ts_data.get("correct", 0),
+            confidence_total=ts_data.get("confidence_total", 0),
+            misconception_count=ts_data.get("misconception_count", 0),
+        )
+    updated_at_raw = data.get("updated_at")
+    try:
+        updated_at = datetime.fromisoformat(updated_at_raw) if updated_at_raw else datetime.now(timezone.utc)
+    except (ValueError, TypeError):
+        updated_at = datetime.now(timezone.utc)
+
+    return LearnerState(
+        topics=topics,
+        recent_misconceptions=data.get("recent_misconceptions", []),
+        attempt_history=data.get("attempt_history", []),
+        updated_at=updated_at,
+    )
+
+
 class LearningProfileStore:
     def __init__(self) -> None:
         self._learners: dict[str, LearnerState] = defaultdict(LearnerState)
-        self._seed_default_profile("alex")
+        self._load()
+        # Only seed alex's profile if it wasn't already persisted
+        if not self._learners["alex"].topics:
+            self._seed_default_profile("alex")
+            self._save()
+
+    def _load(self) -> None:
+        """Load persisted profiles from disk if available."""
+        if not _PERSIST_FILE.exists():
+            return
+        try:
+            raw = json.loads(_PERSIST_FILE.read_text(encoding="utf-8"))
+            for learner_id, data in raw.items():
+                self._learners[learner_id] = _deserialize_learner(data)
+        except Exception as err:
+            print(f"[LearningProfileStore] Could not load persisted profiles: {err}")
+
+    def _save(self) -> None:
+        """Persist all profiles to disk."""
+        try:
+            _PERSIST_FILE.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                learner_id: _serialize_learner(state)
+                for learner_id, state in self._learners.items()
+            }
+            _PERSIST_FILE.write_text(json.dumps(payload, default=str, indent=2), encoding="utf-8")
+        except Exception as err:
+            print(f"[LearningProfileStore] Could not save profiles: {err}")
 
     def _seed_default_profile(self, learner_id: str) -> None:
         learner = self._learners[learner_id]
-        
+
         # Seed realistic initial data so the hackathon judges immediately see a rich profile
         learner.topics["Earth & Planetary Science"] = TopicState(attempts=6, correct=4, confidence_total=24, misconception_count=1)
         learner.topics["Thermodynamics & Energy"] = TopicState(attempts=4, correct=3, confidence_total=16, misconception_count=0)
         learner.topics["Quantum Mechanics Basics"] = TopicState(attempts=5, correct=2, confidence_total=21, misconception_count=2)
-        
+
         learner.recent_misconceptions.append({
             "id": "m-seasons-01",
             "topic": "Earth & Planetary Science",
@@ -57,7 +132,7 @@ class LearningProfileStore:
             "verification_check": "If orbital distance caused seasons, what would happen in Australia when it is summer in the USA?",
             "verification_options": [
                 "Australia would also be in summer (both hemispheres simultaneously warm)",
-                "Australia would be in winter (hemispheres have opposite seasons)",
+                "Australia would be in winter (hemispheres have opposite seasons due to tilt)",
                 "Australia would experience no seasonal changes",
                 "Australia's seasons would lag by 6 months"
             ],
@@ -71,7 +146,7 @@ class LearningProfileStore:
         state.attempts += 1
         state.correct += int(is_correct)
         state.confidence_total += confidence
-        
+
         attempt_record = {
             "id": str(uuid4())[:8],
             "topic": topic,
@@ -84,13 +159,14 @@ class LearningProfileStore:
         }
         learner.attempt_history.insert(0, attempt_record)
         del learner.attempt_history[30:]  # Keep last 30
-        
+
         if misconception:
             state.misconception_count += 1
             learner.recent_misconceptions.insert(0, misconception)
             del learner.recent_misconceptions[8:]
-            
+
         learner.updated_at = datetime.now(timezone.utc)
+        self._save()
         return learner
 
     def get(self, learner_id: str) -> LearnerState:
@@ -104,7 +180,7 @@ class MisconceptionDetector:
     def detect(self, topic: str, question: str, student_answer: str, correct_answer: str, is_correct: bool) -> dict | None:
         if is_correct:
             return None
-            
+
         # Try AI Diagnosis with Gemini 2.5 Flash if available
         if self.gemini and self.gemini.settings.gemini_api_key:
             try:
@@ -136,7 +212,7 @@ class MisconceptionDetector:
                 return parsed
             except Exception:
                 pass
-                
+
         # Smart fallback rule engine
         answer = student_answer.lower()
         if "season" in topic.lower() or "sun" in answer or "closer" in answer:
@@ -158,7 +234,7 @@ class MisconceptionDetector:
                 "verification_correct_index": 0,
                 "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
             }
-            
+
         return {
             "id": f"m-{str(uuid4())[:8]}",
             "topic": topic,

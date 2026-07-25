@@ -138,6 +138,10 @@ export async function listDocuments(): Promise<UploadedDocument[]> {
   return apiJson<UploadedDocument[]>("/api/v1/documents");
 }
 
+export async function getDocument(documentId: string): Promise<UploadedDocument> {
+  return apiJson<UploadedDocument>(`/api/v1/documents/${documentId}`);
+}
+
 export async function askStudyQuestion(documentId: string, question: string): Promise<StudyAnswer> {
   return apiJson<StudyAnswer>("/api/v1/study/chat", {
     method: "POST",
