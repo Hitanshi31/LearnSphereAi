@@ -63,9 +63,10 @@ class DocumentRepository:
     # Public interface
     # ------------------------------------------------------------------ #
 
-    def create(self, filename: str, created_at) -> DocumentDetail:
+    def create(self, filename: str, created_at, document_id: str | None = None) -> DocumentDetail:
+        doc_id = document_id if document_id else str(uuid4())
         document = DocumentDetail(
-            id=str(uuid4()), filename=filename, status=DocumentStatus.PROCESSING, created_at=created_at
+            id=doc_id, filename=filename, status=DocumentStatus.PROCESSING, created_at=created_at
         )
         with self._lock:
             self._documents[document.id] = document

@@ -4,20 +4,29 @@ import { useEffect, useRef, useState } from "react";
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   askStudyQuestion,
+  explainInStyle,
+  generateAdaptiveQuiz,
   generateNotes,
   generateQuiz,
+  generateVisual,
   getDocument,
   getLearningProfile,
+  ingestYoutube,
   listDocuments,
   submitAttempt,
   type Citation,
+  type ConceptNode,
+  type ExplainStyle,
   type KeyConcept,
   type LearningProfile,
   type MisconceptionInsight,
   type Quiz,
+  type StyleExplanation,
   type StudyAnswer,
   type StudyNotes,
   type UploadedDocument,
+  type VisualExplainer,
+  type YoutubeIngestResult,
 } from "@/lib/documents-api";
 
 const learnerId = "alex";
@@ -91,6 +100,21 @@ export function LearningDashboard() {
   const [busy, setBusy] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  // YouTube state
+  const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [youtubeResult, setYoutubeResult] = useState<YoutubeIngestResult>();
+  const [youtubeBusy, setYoutubeBusy] = useState(false);
+
+  // Visual explainer state
+  const [visual, setVisual] = useState<VisualExplainer>();
+  const [visualBusy, setVisualBusy] = useState(false);
+
+  // Explain in style state
+  const [explainTopic, setExplainTopic] = useState("");
+  const [explainStyle, setExplainStyle] = useState<ExplainStyle>("beginner");
+  const [styleExplanation, setStyleExplanation] = useState<StyleExplanation>();
+  const [explainBusy, setExplainBusy] = useState(false);
 
   const refreshProfile = async () => {
     try {
@@ -348,7 +372,58 @@ export function LearningDashboard() {
   };
 
   const activeInsight = insight ?? profile?.recent_misconceptions[0];
-  const navItems = ["Overview", "My materials", "Study notes", "Practice", "Learning profile"];
+  const navItems = ["Overview", "My materials", "Study notes", "Practice", "Learning profile", "YouTube"];
+
+  // Visual explainer handler
+  const loadVisual = async () => {
+    if (!documentId) return setStatus("Please upload a PDF document first.");
+    setVisualBusy(true);
+    setStatus("Generating concept map...");
+    try {
+      const v = await generateVisual(documentId);
+      setVisual(v);
+      setStatus("Concept map generated!");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Could not generate visual.");
+    } finally {
+      setVisualBusy(false);
+    }
+  };
+
+  // Explain in style handler
+  const loadStyleExplanation = async () => {
+    if (!documentId || !explainTopic.trim()) return;
+    setExplainBusy(true);
+    setStatus(`Generating ${explainStyle} explanation...`);
+    try {
+      const res = await explainInStyle(documentId, explainTopic, explainStyle);
+      setStyleExplanation(res);
+      setStatus("");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Could not generate explanation.");
+    } finally {
+      setExplainBusy(false);
+    }
+  };
+
+  // YouTube ingestion handler
+  const handleYoutubeIngest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!youtubeUrl.trim()) return;
+    setYoutubeBusy(true);
+    setStatus("Fetching YouTube transcript and indexing...");
+    try {
+      const result = await ingestYoutube(youtubeUrl);
+      setYoutubeResult(result);
+      setDocumentId(result.document_id);
+      setDocumentName(result.title);
+      setStatus(`✓ ${result.chunk_count} chunks indexed from ${result.total_words.toLocaleString()} words (${result.language})`);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed to ingest YouTube video.");
+    } finally {
+      setYoutubeBusy(false);
+    }
+  };
 
   const allQuestionsAnswered = quiz && submittedIndexes.size === quiz.questions.length;
   const quizScore = quizResults.filter((r) => r?.correct).length;
@@ -669,59 +744,169 @@ export function LearningDashboard() {
 
         {/* TAB 3: STUDY NOTES */}
         {nav === "Study notes" && (
-          <Card className="ask">
-            <h3>AI Summary & Grounded Study Notes</h3>
-            <p>Generates an executive overview, key concepts dictionary, and grounded study notes from your uploaded PDF.</p>
+          <>
+            <Card className="ask">
+              <h3>AI Summary & Grounded Study Notes</h3>
+              <p>Generates an executive overview, key concepts dictionary, and grounded study notes from your uploaded PDF.</p>
 
-            <button className="primary" disabled={busy || !documentId} onClick={loadNotes}>
-              {notes ? "Regenerate Summary & Notes" : "Generate Summary & Notes"}
-            </button>
+              <button className="primary" disabled={busy || !documentId} onClick={loadNotes}>
+                {notes ? "Regenerate Summary & Notes" : "Generate Summary & Notes"}
+              </button>
 
-            {!documentId && (
-              <p style={{ marginTop: "14px", color: "#e53e3e", fontSize: "13px" }}>
-                ⚠️ Please upload a PDF document first under "My materials" or using the "+ Upload PDF" button.
-              </p>
-            )}
-
-            {notes && (
-              <div className="study-answer" style={{ marginTop: "20px" }}>
-                <b>EXECUTIVE SUMMARY</b>
-                <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#202236", fontWeight: "500" }}>
-                  {notes.summary || "Summary generated from indexed source material."}
+              {!documentId && (
+                <p style={{ marginTop: "14px", color: "#e53e3e", fontSize: "13px" }}>
+                  ⚠️ Please upload a PDF document first under "My materials" or using the "+ Upload PDF" button.
                 </p>
+              )}
 
-                {notes.key_concepts && notes.key_concepts.length > 0 && (
-                  <>
-                    <b style={{ marginTop: "18px" }}>KEY CONCEPTS & DEFINITIONS</b>
-                    <div className="concepts-grid">
-                      {notes.key_concepts.map((kc, idx) => (
-                        <div key={idx} className="concept-card">
-                          <h4>{kc.term}</h4>
-                          <p>{kc.definition}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+              {notes && (
+                <div className="study-answer" style={{ marginTop: "20px" }}>
+                  <b>EXECUTIVE SUMMARY</b>
+                  <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#202236", fontWeight: "500" }}>
+                    {notes.summary || "Summary generated from indexed source material."}
+                  </p>
 
-                <b style={{ marginTop: "20px" }}>GROUNDED STUDY NOTES</b>
-                <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.65", color: "#34374c", fontSize: "13.5px" }}>
-                  {notes.notes}
+                  {notes.key_concepts && notes.key_concepts.length > 0 && (
+                    <>
+                      <b style={{ marginTop: "18px" }}>KEY CONCEPTS & DEFINITIONS</b>
+                      <div className="concepts-grid">
+                        {notes.key_concepts.map((kc, idx) => (
+                          <div key={idx} className="concept-card">
+                            <h4>{kc.term}</h4>
+                            <p>{kc.definition}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  <b style={{ marginTop: "20px" }}>GROUNDED STUDY NOTES</b>
+                  <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.65", color: "#34374c", fontSize: "13.5px" }}>
+                    {notes.notes}
+                  </div>
+
+                  {notes.citations && notes.citations.length > 0 && (
+                    <>
+                      <b style={{ marginTop: "18px" }}>SOURCE CITATIONS & PROVENANCE</b>
+                      <div className="citations">
+                        {notes.citations.map((c) => (
+                          <span key={c.chunk_id}>Source · Page {c.page_number}</span>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
+              )}
+            </Card>
 
-                {notes.citations && notes.citations.length > 0 && (
-                  <>
-                    <b style={{ marginTop: "18px" }}>SOURCE CITATIONS & PROVENANCE</b>
-                    <div className="citations">
-                      {notes.citations.map((c) => (
-                        <span key={c.chunk_id}>Source · Page {c.page_number}</span>
-                      ))}
+            {/* Visual Concept Map Panel */}
+            {documentId && (
+              <Card className="ask" style={{ marginTop: "18px" }}>
+                <h3>🗺️ Visual Concept Map</h3>
+                <p>Generate an AI-powered Mermaid diagram showing how the key concepts in your document relate to each other.</p>
+                <button className="primary" disabled={visualBusy} onClick={loadVisual}>
+                  {visualBusy ? "Generating map..." : visual ? "Regenerate Concept Map" : "Generate Concept Map"}
+                </button>
+                {visual && (
+                  <div style={{ marginTop: "20px" }}>
+                    <b style={{ color: "#564ad9", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px" }}>
+                      {visual.title}
+                    </b>
+                    {/* Mermaid diagram rendered via CDN script */}
+                    <div
+                      className="mermaid"
+                      style={{
+                        marginTop: "12px",
+                        padding: "20px",
+                        background: "#f7f6ff",
+                        borderRadius: "12px",
+                        border: "1px solid #dcd7fe",
+                        overflowX: "auto",
+                        fontSize: "13px",
+                      }}
+                      ref={(el) => {
+                        if (el && visual.mermaid_code) {
+                          el.textContent = visual.mermaid_code;
+                          // @ts-ignore
+                          if (typeof window !== "undefined" && (window as any).mermaid) {
+                            el.removeAttribute("data-processed");
+                            // @ts-ignore
+                            (window as any).mermaid.run({ nodes: [el] });
+                          }
+                        }
+                      }}
+                    >
+                      {visual.mermaid_code}
                     </div>
-                  </>
+                    {visual.concept_nodes.length > 0 && (
+                      <>
+                        <b style={{ marginTop: "18px", display: "block", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px", color: "#564ad9" }}>CONCEPT NODES</b>
+                        <div className="concepts-grid" style={{ marginTop: "10px" }}>
+                          {visual.concept_nodes.map((node) => (
+                            <div key={node.id} className="concept-card" style={{
+                              borderLeft: `3px solid ${ node.type === "core" ? "#6255ef" : node.type === "process" ? "#f59e0b" : node.type === "outcome" ? "#22c55e" : "#94a3b8" }`,
+                            }}>
+                              <h4 style={{ margin: "0 0 4px", fontSize: "13px" }}>{node.label}</h4>
+                              <p style={{ margin: 0, fontSize: "12px" }}>{node.summary}</p>
+                              <span style={{ fontSize: "10px", color: "#9294a6", textTransform: "uppercase" }}>{node.type}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 )}
-              </div>
+              </Card>
             )}
-          </Card>
+
+            {/* Explain in Different Styles Panel */}
+            {documentId && (
+              <Card className="ask" style={{ marginTop: "18px" }}>
+                <h3>🎨 Explain in Different Styles</h3>
+                <p>Re-explain any topic from your document in a learning style that works for you — from beginner-friendly to academic to code analogies.</p>
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end", marginTop: "12px" }}>
+                  <div style={{ flex: 1, minWidth: "200px" }}>
+                    <label style={{ fontSize: "11px", fontWeight: 700, color: "#564ad9", textTransform: "uppercase", letterSpacing: "0.6px", display: "block", marginBottom: "6px" }}>TOPIC TO EXPLAIN</label>
+                    <input
+                      value={explainTopic}
+                      onChange={(e) => setExplainTopic(e.target.value)}
+                      placeholder="e.g. How photosynthesis works"
+                      style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid #ddd", fontSize: "14px", background: "#fafafa", outline: "none" }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "11px", fontWeight: 700, color: "#564ad9", textTransform: "uppercase", letterSpacing: "0.6px", display: "block", marginBottom: "6px" }}>STYLE</label>
+                    <select
+                      value={explainStyle}
+                      onChange={(e) => setExplainStyle(e.target.value as ExplainStyle)}
+                      style={{ padding: "10px 14px", borderRadius: "8px", border: "1px solid #ddd", fontSize: "13px", background: "#fafafa", cursor: "pointer", outline: "none" }}
+                    >
+                      {(["beginner", "visual", "programmer", "researcher", "story", "interview"] as ExplainStyle[]).map((s) => (
+                        <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    className="primary"
+                    disabled={explainBusy || !explainTopic.trim()}
+                    onClick={loadStyleExplanation}
+                  >
+                    {explainBusy ? "Generating..." : "Explain"} →
+                  </button>
+                </div>
+                {styleExplanation && (
+                  <div className="study-answer" style={{ marginTop: "20px" }}>
+                    <b style={{ fontSize: "11px", letterSpacing: "0.6px" }}>
+                      {styleExplanation.style.toUpperCase()} EXPLANATION — {styleExplanation.topic}
+                    </b>
+                    <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.7", color: "#34374c", fontSize: "13.5px", marginTop: "10px" }}>
+                      {styleExplanation.content}
+                    </div>
+                  </div>
+                )}
+              </Card>
+            )}
+          </>
         )}
 
         {/* TAB 4: PRACTICE — Full multi-question quiz */}
@@ -729,9 +914,36 @@ export function LearningDashboard() {
           <Card className="ask">
             <h3>Diagnostic practice</h3>
             <p>Questions focus on reasoning and misconceptions so your Learning Profile can adapt.</p>
-            <button className="primary" disabled={busy || !documentId} onClick={loadQuiz}>
-              {quiz ? "Regenerate diagnostic quiz" : "Generate a diagnostic quiz"}
-            </button>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+              <button className="primary" disabled={busy || !documentId} onClick={loadQuiz}>
+                {quiz ? "Regenerate diagnostic quiz" : "Generate a diagnostic quiz"}
+              </button>
+              <button
+                className="primary"
+                style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)", border: "none" }}
+                disabled={busy || !documentId}
+                onClick={async () => {
+                  if (!documentId) return setStatus("Upload a PDF first.");
+                  setBusy(true);
+                  setStatus("Generating adaptive quiz from your weak topics...");
+                  try {
+                    const res = await generateAdaptiveQuiz(documentId, learnerId);
+                    setQuiz(res);
+                    setCurrentQuestionIndex(0);
+                    setSelectedChoice(undefined);
+                    setSubmittedIndexes(new Set());
+                    setQuizResults([]);
+                    setStatus("⚡ Adaptive quiz generated — targeting your weak areas!");
+                  } catch (e) {
+                    setStatus(e instanceof Error ? e.message : "Could not create adaptive quiz.");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                ⚡ Adaptive Quiz (profile-aware)
+              </button>
+            </div>
 
             {!documentId && (
               <p style={{ marginTop: "14px", color: "#e53e3e", fontSize: "13px" }}>
@@ -1029,6 +1241,110 @@ export function LearningDashboard() {
                 <button className="primary" onClick={() => setNav("Practice")}>
                   Start a diagnostic quiz →
                 </button>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* TAB 6: YOUTUBE */}
+        {nav === "YouTube" && (
+          <div>
+            <Card className="ask">
+              <h3>📺 YouTube Video Ingestion</h3>
+              <p>
+                Paste any YouTube URL to extract its transcript, generate vector embeddings, and
+                use all LearnSphere study tools — quiz, notes, chat, visual maps — on video content.
+              </p>
+              <form onSubmit={handleYoutubeIngest} style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
+                <input
+                  value={youtubeUrl}
+                  onChange={(e) => setYoutubeUrl(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  style={{ flex: 1, minWidth: "260px", padding: "11px 16px", borderRadius: "9px", border: "1px solid #dcd7fe", fontSize: "14px", background: "#fafafa", outline: "none" }}
+                />
+                <button className="primary" type="submit" disabled={youtubeBusy || !youtubeUrl.trim()}>
+                  {youtubeBusy ? "Indexing..." : "Index Video"} ↑
+                </button>
+              </form>
+
+              {youtubeResult && (
+                <div
+                  style={{
+                    marginTop: "20px",
+                    padding: "18px 20px",
+                    background: "linear-gradient(120deg, #f0efff, #f0fff4)",
+                    border: "1px solid #c5bdfc",
+                    borderRadius: "12px",
+                  }}
+                >
+                  <p className="eyebrow" style={{ color: "#564ad9", margin: "0 0 6px" }}>VIDEO INDEXED SUCCESSFULLY</p>
+                  <h4 style={{ margin: "0 0 4px", color: "#202236" }}>{youtubeResult.title}</h4>
+                  <p style={{ margin: 0, fontSize: "12px", color: "#85889a" }}>
+                    {youtubeResult.chunk_count} chunks · {youtubeResult.total_words.toLocaleString()} words · Language: {youtubeResult.language}
+                  </p>
+                  <p style={{ margin: "12px 0 0", fontSize: "13px", color: "#564ad9", fontWeight: 600 }}>
+                    ✓ Document ID <code style={{ background: "#e9e7ff", padding: "2px 6px", borderRadius: "4px", fontSize: "12px" }}>{youtubeResult.document_id}</code> is now active.
+                    Use "Study notes", "Practice", or "Ask about your material" to study this video.
+                  </p>
+                </div>
+              )}
+
+              <div style={{ marginTop: "24px", padding: "16px", background: "#f7f6ff", borderRadius: "10px", fontSize: "13px", color: "#565a6d" }}>
+                <b style={{ fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase", color: "#564ad9" }}>HOW IT WORKS</b>
+                <ol style={{ margin: "10px 0 0", paddingLeft: "20px", lineHeight: "1.8" }}>
+                  <li>LearnSphere fetches the video transcript (no API key needed for public videos with captions)</li>
+                  <li>The transcript is chunked into ~300-word segments with timestamps</li>
+                  <li>BGE embeddings are generated and indexed into ChromaDB</li>
+                  <li>All study tools — chat, notes, quiz, concept map — work on the video content</li>
+                </ol>
+              </div>
+            </Card>
+
+            {youtubeResult && (
+              <Card className="ask" style={{ marginTop: "18px" }}>
+                <h3>🗺️ Video Concept Map</h3>
+                <p>Generate a visual concept map from the indexed video transcript.</p>
+                <button
+                  className="primary"
+                  disabled={visualBusy}
+                  onClick={async () => {
+                    setVisualBusy(true);
+                    setStatus("Generating concept map from video...");
+                    try {
+                      const v = await generateVisual(youtubeResult.document_id, true);
+                      setVisual(v);
+                      setStatus("Video concept map generated!");
+                    } catch (e) {
+                      setStatus(e instanceof Error ? e.message : "Could not generate concept map.");
+                    } finally {
+                      setVisualBusy(false);
+                    }
+                  }}
+                >
+                  {visualBusy ? "Generating..." : visual ? "Regenerate Map" : "Generate Concept Map"}
+                </button>
+                {visual && visual.document_id === youtubeResult.document_id && (
+                  <div style={{ marginTop: "16px" }}>
+                    <b style={{ color: "#564ad9", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px" }}>{visual.title}</b>
+                    <div
+                      className="mermaid"
+                      style={{ marginTop: "10px", padding: "16px", background: "#f7f6ff", borderRadius: "10px", border: "1px solid #dcd7fe", overflowX: "auto" }}
+                      ref={(el) => {
+                        if (el && visual.mermaid_code) {
+                          el.textContent = visual.mermaid_code;
+                          // @ts-ignore
+                          if (typeof window !== "undefined" && (window as any).mermaid) {
+                            el.removeAttribute("data-processed");
+                            // @ts-ignore
+                            (window as any).mermaid.run({ nodes: [el] });
+                          }
+                        }
+                      }}
+                    >
+                      {visual.mermaid_code}
+                    </div>
+                  </div>
+                )}
               </Card>
             )}
           </div>

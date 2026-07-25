@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .repositories import DocumentRepository
 from .schemas import (
+    AdaptiveQuizRequest,
     AttemptRecord,
     AttemptRequest,
     AttemptResponse,
@@ -17,20 +18,28 @@ from .schemas import (
     ChunkPreview,
     DocumentDetail,
     DocumentSummary,
+    ExplainRequest,
+    ExplainResponse,
     KeyConcept,
     LearningProfile,
     MisconceptionInsight,
     QuizResponse,
     StudyNotesResponse,
     TopicMastery,
+    VisualExplainerResponse,
+    ConceptNode,
+    YoutubeIngestRequest,
+    YoutubeIngestResponse,
 )
 from .services.document_processor import PdfProcessor
 from .services.grounded_learning import GeminiClient, GroundedStudyService, SourceChunk, VectorIndex
 from .services.learning_profile import LearningProfileStore, MisconceptionDetector
+from .services.youtube_processor import YouTubeProcessor
 
 settings = get_settings()
 repository = DocumentRepository()
 processor = PdfProcessor()
+youtube_processor = YouTubeProcessor()
 gemini_client = GeminiClient(settings)
 study_service = GroundedStudyService(VectorIndex(settings), gemini_client)
 profile_store = LearningProfileStore()
@@ -241,3 +250,158 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
     background_tasks.add_task(_process_document_task, document.id, saved_path)
 
     return document  # Status is "processing" — client should poll GET /api/v1/documents/{id}
+
+
+# ------------------------------------------------------------------ #
+# YouTube ingestion
+# ------------------------------------------------------------------ #
+
+@app.post("/api/v1/youtube", response_model=YoutubeIngestResponse, status_code=status.HTTP_201_CREATED)
+def ingest_youtube(request: YoutubeIngestRequest) -> YoutubeIngestResponse:
+    """Extract transcript from a YouTube URL, chunk it, and index it into ChromaDB."""
+    document_id = f"yt-{str(uuid4())[:8]}"
+    try:
+        result = youtube_processor.process(request.url, document_id)
+    except Exception as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+
+    try:
+        study_service.vector_index.index(document_id, result.chunks)
+    except Exception as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Indexing failed: {error}") from error
+
+    # Register document in repository so it appears in document list and study tools work seamlessly
+    chunks_preview = [
+        ChunkPreview(
+            id=chunk.id,
+            page_number=chunk.page_number,
+            text=chunk.text,
+            word_count=len(chunk.text.split()),
+        )
+        for chunk in result.chunks
+    ]
+    repository.create(result.title, datetime.now(timezone.utc), document_id=document_id)
+    repository.mark_ready(
+        document_id=document_id,
+        page_count=1,
+        extracted_characters=sum(len(c.text) for c in result.chunks),
+        chunks=chunks_preview,
+    )
+
+    return YoutubeIngestResponse(
+        document_id=document_id,
+        video_id=result.video_id,
+        title=result.title,
+        chunk_count=len(result.chunks),
+        total_words=result.total_words,
+        language=result.language,
+        status="ready",
+    )
+
+
+# ------------------------------------------------------------------ #
+# Visual explainer
+# ------------------------------------------------------------------ #
+
+@app.post("/api/v1/documents/{document_id}/visual", response_model=VisualExplainerResponse)
+def generate_visual(document_id: str) -> VisualExplainerResponse:
+    """Generate a Mermaid concept map and concept node list for a document."""
+    require_document(document_id)
+    try:
+        data = study_service.visual_explainer(document_id)
+        return VisualExplainerResponse(
+            document_id=document_id,
+            title=data.get("title", "Concept Map"),
+            mermaid_code=data.get("mermaid_code", ""),
+            concept_nodes=[
+                ConceptNode(
+                    id=node.get("id", f"node-{i}"),
+                    label=node.get("label", ""),
+                    summary=node.get("summary", ""),
+                    type=node.get("type", "definition"),
+                )
+                for i, node in enumerate(data.get("concept_nodes", []))
+            ],
+        )
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+
+# Also support visual for YouTube documents (no status check needed)
+@app.post("/api/v1/youtube/{document_id}/visual", response_model=VisualExplainerResponse)
+def generate_visual_youtube(document_id: str) -> VisualExplainerResponse:
+    """Generate a Mermaid concept map for a YouTube-ingested document."""
+    try:
+        data = study_service.visual_explainer(document_id)
+        return VisualExplainerResponse(
+            document_id=document_id,
+            title=data.get("title", "Concept Map"),
+            mermaid_code=data.get("mermaid_code", ""),
+            concept_nodes=[
+                ConceptNode(
+                    id=node.get("id", f"node-{i}"),
+                    label=node.get("label", ""),
+                    summary=node.get("summary", ""),
+                    type=node.get("type", "definition"),
+                )
+                for i, node in enumerate(data.get("concept_nodes", []))
+            ],
+        )
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+
+# ------------------------------------------------------------------ #
+# Explain in different styles
+# ------------------------------------------------------------------ #
+
+@app.post("/api/v1/documents/{document_id}/explain", response_model=ExplainResponse)
+def explain_in_style(document_id: str, request: ExplainRequest) -> ExplainResponse:
+    """Re-explain a topic from the document in one of six learning styles."""
+    require_document(document_id)
+    try:
+        content = study_service.explain_in_style(document_id, request.topic, request.style)
+        return ExplainResponse(
+            document_id=document_id,
+            topic=request.topic,
+            style=request.style,
+            content=content,
+        )
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+
+# Also support explain for YouTube documents
+@app.post("/api/v1/youtube/{document_id}/explain", response_model=ExplainResponse)
+def explain_in_style_youtube(document_id: str, request: ExplainRequest) -> ExplainResponse:
+    """Re-explain a topic from a YouTube document in one of six learning styles."""
+    try:
+        content = study_service.explain_in_style(document_id, request.topic, request.style)
+        return ExplainResponse(
+            document_id=document_id,
+            topic=request.topic,
+            style=request.style,
+            content=content,
+        )
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+
+# ------------------------------------------------------------------ #
+# Adaptive quiz (profile-aware difficulty weighting)
+# ------------------------------------------------------------------ #
+
+@app.post("/api/v1/documents/{document_id}/adaptive-quiz", response_model=QuizResponse)
+def adaptive_quiz(document_id: str, request: AdaptiveQuizRequest) -> QuizResponse:
+    """Generate a quiz weighted toward the learner's weak topics."""
+    require_document(document_id)
+    learner = profile_store.get(request.learner_id)
+    weak_topics = [
+        topic for topic, state in learner.topics.items()
+        if state.mastery < 60 and state.attempts >= 1
+    ]
+    try:
+        questions = study_service.adaptive_quiz(document_id, weak_topics)
+        return QuizResponse(document_id=document_id, questions=questions)
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error

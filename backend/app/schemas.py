@@ -132,3 +132,56 @@ class LearningProfile(BaseModel):
 class AttemptResponse(BaseModel):
     profile: LearningProfile
     misconception: MisconceptionInsight | None = None
+
+
+# ── YouTube ingestion ──────────────────────────────────────────────────────────
+
+class YoutubeIngestRequest(BaseModel):
+    url: str = Field(min_length=10, max_length=500)
+
+
+class YoutubeIngestResponse(BaseModel):
+    document_id: str
+    video_id: str
+    title: str
+    chunk_count: int
+    total_words: int
+    language: str
+    status: str
+
+
+# ── Visual explainer ───────────────────────────────────────────────────────────
+
+class ConceptNode(BaseModel):
+    id: str
+    label: str
+    summary: str
+    type: str  # core | process | outcome | definition
+
+
+class VisualExplainerResponse(BaseModel):
+    document_id: str
+    title: str
+    mermaid_code: str
+    concept_nodes: list[ConceptNode] = Field(default_factory=list)
+
+
+# ── Explain in Different Styles ────────────────────────────────────────────────
+
+class ExplainRequest(BaseModel):
+    topic: str = Field(min_length=2, max_length=200)
+    style: str = Field(default="beginner")  # beginner|visual|programmer|researcher|story|interview
+
+
+class ExplainResponse(BaseModel):
+    document_id: str
+    topic: str
+    style: str
+    content: str
+
+
+# ── Adaptive quiz ──────────────────────────────────────────────────────────────
+
+class AdaptiveQuizRequest(BaseModel):
+    learner_id: str = Field(default="alex", min_length=1, max_length=80)
+

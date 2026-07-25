@@ -185,3 +185,82 @@ export async function submitAttempt(input: SubmitAttemptInput): Promise<{
     }),
   });
 }
+
+// ─── YouTube ingestion ────────────────────────────────────────────────────────
+
+export type YoutubeIngestResult = {
+  document_id: string;
+  video_id: string;
+  title: string;
+  chunk_count: number;
+  total_words: number;
+  language: string;
+  status: string;
+};
+
+export async function ingestYoutube(url: string): Promise<YoutubeIngestResult> {
+  return apiJson<YoutubeIngestResult>("/api/v1/youtube", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  });
+}
+
+// ─── Visual explainer ─────────────────────────────────────────────────────────
+
+export type ConceptNode = {
+  id: string;
+  label: string;
+  summary: string;
+  type: "core" | "process" | "outcome" | "definition";
+};
+
+export type VisualExplainer = {
+  document_id: string;
+  title: string;
+  mermaid_code: string;
+  concept_nodes: ConceptNode[];
+};
+
+export async function generateVisual(
+  documentId: string,
+  isYoutube = false,
+): Promise<VisualExplainer> {
+  const base = isYoutube ? `/api/v1/youtube/${documentId}` : `/api/v1/documents/${documentId}`;
+  return apiJson<VisualExplainer>(`${base}/visual`, { method: "POST" });
+}
+
+// ─── Explain in different styles ──────────────────────────────────────────────
+
+export type ExplainStyle = "beginner" | "visual" | "programmer" | "researcher" | "story" | "interview";
+
+export type StyleExplanation = {
+  document_id: string;
+  topic: string;
+  style: string;
+  content: string;
+};
+
+export async function explainInStyle(
+  documentId: string,
+  topic: string,
+  style: ExplainStyle,
+  isYoutube = false,
+): Promise<StyleExplanation> {
+  const base = isYoutube ? `/api/v1/youtube/${documentId}` : `/api/v1/documents/${documentId}`;
+  return apiJson<StyleExplanation>(`${base}/explain`, {
+    method: "POST",
+    body: JSON.stringify({ topic, style }),
+  });
+}
+
+// ─── Adaptive quiz ────────────────────────────────────────────────────────────
+
+export async function generateAdaptiveQuiz(
+  documentId: string,
+  learnerId = "alex",
+): Promise<Quiz> {
+  return apiJson<Quiz>(`/api/v1/documents/${documentId}/adaptive-quiz`, {
+    method: "POST",
+    body: JSON.stringify({ learner_id: learnerId }),
+  });
+}

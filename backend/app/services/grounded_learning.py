@@ -352,3 +352,190 @@ class GroundedStudyService:
                     citations=citations
                 )
             ]
+
+    def visual_explainer(self, document_id: str) -> dict:
+        """Generate a Mermaid diagram + concept node list from document content.
+
+        Returns a dict with keys:
+            mermaid_code: str  — valid Mermaid graph definition
+            concept_nodes: list[dict]  — [{id, label, summary, type}]
+            title: str
+        """
+        sources = self.vector_index.get_document_chunks(document_id, limit=20)
+        if not sources:
+            sources = self.vector_index.search(document_id, "concepts relationships processes", limit=8)
+        if not sources:
+            raise ValueError("No indexed content found for this document.")
+
+        prompt = (
+            "You are an expert educational diagram designer. Analyze the study material below "
+            "and produce TWO outputs in a single JSON object.\n\n"
+            "Return STRICT JSON with this exact structure:\n"
+            "{\n"
+            '  "title": "Short descriptive title for this concept map (5-8 words)",\n'
+            '  "mermaid_code": "A valid Mermaid flowchart. Use graph TD syntax. '
+            "Include 6-10 nodes. Each node label should be short (3-6 words). "
+            "Use --> for relationships. Add meaningful edge labels with |label|. "
+            'Quote node labels that contain spaces or special chars. Example:\\ngraph TD\\n  A[\\"Core Concept\\"] -->|leads to| B[\\"Effect\\"]",\n'
+            '  "concept_nodes": [\n'
+            '    {"id": "node-1", "label": "Concept Name", "summary": "2-sentence plain-English summary of this concept.", "type": "core|process|outcome|definition"}\n'
+            "  ]\n"
+            "}\n\n"
+            "RULES:\n"
+            "- The Mermaid code must be syntactically valid. Use graph TD.\n"
+            "- concept_nodes must include ALL nodes referenced in the diagram.\n"
+            "- type field must be exactly one of: core, process, outcome, definition\n"
+            "- Extract only concepts genuinely present in the source material.\n"
+            "- No markdown fences in mermaid_code — just the raw graph definition.\n\n"
+            f"STUDY MATERIAL:\n{self._context(sources)}"
+        )
+
+        try:
+            raw = self.gemini.generate(prompt)
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned.rsplit("\n", 1)[0] if "\n" in cleaned else cleaned[:-3]
+            return json.loads(cleaned.strip())
+        except Exception as err:
+            print("Visual explainer fallback:", err)
+            # Return a minimal fallback diagram
+            return {
+                "title": "Concept Overview",
+                "mermaid_code": (
+                    'graph TD\n  A["Main Topic"] -->|contains| B["Key Concept 1"]\n'
+                    '  A -->|contains| C["Key Concept 2"]\n  B -->|relates to| C'
+                ),
+                "concept_nodes": [
+                    {"id": "node-1", "label": "Main Topic", "summary": "The central subject of this document.", "type": "core"},
+                    {"id": "node-2", "label": "Key Concept 1", "summary": "A primary concept from the material.", "type": "definition"},
+                    {"id": "node-3", "label": "Key Concept 2", "summary": "Another key concept from the material.", "type": "definition"},
+                ],
+            }
+
+    # Style persona instructions for Explain in Different Styles
+    _STYLE_PERSONAS: dict[str, str] = {
+        "beginner": (
+            "Explain this as if speaking to a 12-year-old who has never heard of this topic. "
+            "Use everyday words, short sentences, and at least one fun analogy from daily life. "
+            "Avoid ALL jargon. If you must use a technical word, immediately explain it simply."
+        ),
+        "visual": (
+            "Explain this using a highly visual, spatial description. "
+            "Describe relationships as diagrams in words: 'Imagine a box labelled X, with arrows pointing to Y and Z.' "
+            "Use spatial metaphors: layers, flows, maps, containers, pipelines. "
+            "Structure the explanation as a walkthrough of a mental picture."
+        ),
+        "programmer": (
+            "Explain this to an experienced software engineer. "
+            "Use code analogies, data structure metaphors, and systems-thinking language. "
+            "Feel free to use pseudocode snippets or comparisons to known patterns (e.g. observer pattern, caching, queues). "
+            "Be precise and technical. Skip hand-holding."
+        ),
+        "researcher": (
+            "Explain this in the style of an academic literature review. "
+            "Be precise, use domain terminology, reference mechanisms and evidence. "
+            "Structure with: Background → Core mechanism → Key variables → Limitations → Implications. "
+            "Write in formal third-person academic English."
+        ),
+        "story": (
+            "Explain this as a compelling short story or narrative. "
+            "Personify the concepts — make them characters with motivations. "
+            "The story should have a beginning (the problem), middle (the mechanism at work), and end (the outcome/insight). "
+            "The student should understand the concept through the arc of the story."
+        ),
+        "interview": (
+            "Explain this as a mock technical interview answer. "
+            "Format: 1) Give a crisp one-sentence definition. 2) Explain the mechanism in 3-4 sentences. "
+            "3) Give a real-world example. 4) Mention one edge case or limitation. "
+            "Use confident, precise language. No rambling."
+        ),
+    }
+
+    def explain_in_style(self, document_id: str, topic: str, style: str) -> str:
+        """Re-explain a topic from the document using the requested learning style.
+
+        Args:
+            document_id: Source document to ground the explanation in.
+            topic: The specific concept/topic to explain.
+            style: One of beginner | visual | programmer | researcher | story | interview
+
+        Returns:
+            Markdown-formatted explanation string.
+        """
+        persona = self._STYLE_PERSONAS.get(style.lower(), self._STYLE_PERSONAS["beginner"])
+        sources = self.vector_index.search(document_id, topic, limit=6)
+        if not sources:
+            sources = self.vector_index.get_document_chunks(document_id, limit=6)
+        if not sources:
+            raise ValueError("No indexed content found for this document.")
+
+        prompt = (
+            f"PERSONA: {persona}\n\n"
+            f"TASK: Explain the topic '{topic}' using ONLY the information from the study material below.\n\n"
+            "FORMAT YOUR RESPONSE IN MARKDOWN. Use headers, bold, bullet points, and code blocks where appropriate for your style.\n"
+            "Length: 200-400 words. Make every word count for this specific learning style.\n\n"
+            f"STUDY MATERIAL:\n{self._context(sources)}"
+        )
+
+        return self.gemini.generate(prompt)
+
+    def adaptive_quiz(self, document_id: str, weak_topics: list[str]) -> list[QuizQuestion]:
+        """Generate a quiz that targets the learner's known weak topics.
+
+        Args:
+            document_id: Source document.
+            weak_topics: List of topic names where mastery < 60 from the learning profile.
+
+        Returns:
+            List of QuizQuestion weighted toward weak areas.
+        """
+        # Bias retrieval toward weak topic content
+        query = " ".join(weak_topics) if weak_topics else "important concepts mechanisms"
+        sources = self.vector_index.search(document_id, query, limit=10)
+        if not sources:
+            sources = self.vector_index.get_document_chunks(document_id, limit=10)
+        if not sources:
+            raise ValueError("No indexed study material was found.")
+
+        citations = [s.citation() for s in sources[:5]]
+        weak_focus = (
+            f"IMPORTANT: The learner has shown weakness in these areas: {', '.join(weak_topics)}. "
+            "Weight your questions toward these specific topics.\n\n"
+            if weak_topics else ""
+        )
+
+        try:
+            prompt = (
+                "You are LearnSphere's adaptive quiz engine. Generate exactly 5 diagnostic MCQ questions.\n\n"
+                f"{weak_focus}"
+                "RULES:\n"
+                "- Focus on WHY and HOW questions, not just recall.\n"
+                "- Wrong answers must be believable misconceptions, not obviously silly.\n"
+                "- Each explanation must teach, not just confirm.\n\n"
+                "Return a STRICT JSON array (5 objects):\n"
+                '[{"question":"...","choices":["A","B","C","D"],"answer_index":0,"explanation":"..."}]\n\n'
+                f"STUDY MATERIAL:\n{self._context(sources)}"
+            )
+            raw = self.gemini.generate(prompt)
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned.rsplit("\n", 1)[0] if "\n" in cleaned else cleaned[:-3]
+            rows = json.loads(cleaned.strip())
+            return [
+                QuizQuestion(
+                    id=str(uuid4())[:8],
+                    question=row["question"],
+                    choices=row["choices"],
+                    answer_index=int(row["answer_index"]),
+                    explanation=row["explanation"],
+                    citations=citations,
+                )
+                for row in rows
+            ]
+        except Exception as err:
+            print("Adaptive quiz fallback:", err)
+            return self.quiz(document_id)
