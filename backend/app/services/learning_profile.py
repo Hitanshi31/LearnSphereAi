@@ -186,7 +186,8 @@ class MisconceptionDetector:
             try:
                 prompt = (
                     "You are LearnSphere's AI Misconception Detector. A student answered a practice question incorrectly.\n"
-                    "Identify WHY they reached this wrong conclusion. Analyze their intuitive cognitive bias vs scientific reality.\n\n"
+                    "Identify WHY they reached this wrong conclusion. Analyze their intuitive cognitive bias vs scientific reality.\n"
+                    "RULES: All generated fields MUST be written strictly in the ENGLISH language ONLY.\n\n"
                     f"TOPIC: {topic}\n"
                     f"QUESTION: {question}\n"
                     f"STUDENT ANSWER: {student_answer}\n"

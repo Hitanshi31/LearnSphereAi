@@ -76,6 +76,115 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function EmptyDocumentState({
+  title = "No Active Material Selected",
+  description = "Upload a PDF document or paste a YouTube URL in 'My materials' to unlock AI study tools, diagnostic quizzes, visual concept maps, and grounded Q&A.",
+  onAction,
+  actionText = "Go to My Materials →",
+}: {
+  title?: string;
+  description?: string;
+  onAction: () => void;
+  actionText?: string;
+}) {
+  return (
+    <Card className="ask" style={{ textAlign: "center", padding: "38px 24px" }}>
+      <div style={{ fontSize: "36px", marginBottom: "10px" }}>📚</div>
+      <h3 style={{ margin: "0 0 6px", color: "#202236" }}>{title}</h3>
+      <p style={{ margin: "0 auto 18px", color: "#747789", fontSize: "13px", maxWidth: "440px" }}>
+        {description}
+      </p>
+      <button className="primary" onClick={onAction}>
+        {actionText}
+      </button>
+    </Card>
+  );
+}
+
+function ConceptMapCard({
+  title,
+  mermaidCode,
+  conceptNodes,
+  busy,
+  onGenerate,
+  buttonText = "Generate Concept Map",
+}: {
+  title?: string;
+  mermaidCode?: string;
+  conceptNodes?: ConceptNode[];
+  busy: boolean;
+  onGenerate: () => void;
+  buttonText?: string;
+}) {
+  return (
+    <Card className="ask" style={{ marginTop: "18px" }}>
+      <h3>🗺️ Visual Concept Map</h3>
+      <p>Generate an AI-powered Mermaid diagram showing how key concepts in your material relate to each other.</p>
+      <button className="primary" disabled={busy} onClick={onGenerate}>
+        {busy ? "Generating map..." : mermaidCode ? "Regenerate Concept Map" : buttonText}
+      </button>
+
+      {mermaidCode && (
+        <div style={{ marginTop: "20px" }}>
+          <b style={{ color: "#564ad9", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px" }}>
+            {title || "Concept Map"}
+          </b>
+          <div
+            className="mermaid"
+            style={{
+              marginTop: "12px",
+              padding: "20px",
+              background: "#f7f6ff",
+              borderRadius: "12px",
+              border: "1px solid #dcd7fe",
+              overflowX: "auto",
+              fontSize: "13px",
+            }}
+            ref={(el) => {
+              if (el && mermaidCode) {
+                el.textContent = mermaidCode;
+                // @ts-ignore
+                if (typeof window !== "undefined" && (window as any).mermaid) {
+                  el.removeAttribute("data-processed");
+                  // @ts-ignore
+                  (window as any).mermaid.run({ nodes: [el] });
+                }
+              }
+            }}
+          >
+            {mermaidCode}
+          </div>
+
+          {conceptNodes && conceptNodes.length > 0 && (
+            <>
+              <b style={{ marginTop: "18px", display: "block", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px", color: "#564ad9" }}>
+                CONCEPT NODES
+              </b>
+              <div className="concepts-grid" style={{ marginTop: "10px" }}>
+                {conceptNodes.map((node) => (
+                  <div
+                    key={node.id}
+                    className="concept-card"
+                    style={{
+                      borderLeft: `3px solid ${
+                        node.type === "core" ? "#6255ef" : node.type === "process" ? "#f59e0b" : node.type === "outcome" ? "#22c55e" : "#94a3b8"
+                      }`,
+                    }}
+                  >
+                    <h4 style={{ margin: "0 0 4px", fontSize: "13px" }}>{node.label}</h4>
+                    <p style={{ margin: 0, fontSize: "12px" }}>{node.summary}</p>
+                    <span style={{ fontSize: "10px", color: "#9294a6", textTransform: "uppercase" }}>{node.type}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function LearningDashboard() {
   const [nav, setNav] = useState("Overview");
   const [documentId, setDocumentId] = useState<string>();
@@ -87,6 +196,7 @@ export function LearningDashboard() {
   const [answer, setAnswer] = useState<StudyAnswer>();
   const [notes, setNotes] = useState<StudyNotes>();
   const [quiz, setQuiz] = useState<Quiz>();
+  const [quizMode, setQuizMode] = useState<"adaptive" | "standard">("adaptive");
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedChoice, setSelectedChoice] = useState<number>();
   const [submittedIndexes, setSubmittedIndexes] = useState<Set<number>>(new Set());
@@ -99,11 +209,11 @@ export function LearningDashboard() {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [ingestMode, setIngestMode] = useState<"pdf" | "youtube">("pdf");
   const fileInput = useRef<HTMLInputElement>(null);
 
   // YouTube state
   const [youtubeUrl, setYoutubeUrl] = useState("");
-  const [youtubeResult, setYoutubeResult] = useState<YoutubeIngestResult>();
   const [youtubeBusy, setYoutubeBusy] = useState(false);
 
   // Visual explainer state
@@ -130,7 +240,7 @@ export function LearningDashboard() {
       const docs = await listDocuments();
       setDocumentList(docs);
     } catch {
-      // Silently ignore if backend is not connected
+      // Silently ignore if backend is offline
     }
   };
 
@@ -139,29 +249,11 @@ export function LearningDashboard() {
     refreshDocumentList();
   }, []);
 
-  // ----------------------------------------------------------------
-  // Poll for document processing completion via useEffect interval.
-  // Fires every 2s whenever docDetails.status === 'processing'.
-  // The upload handler returns immediately — this effect drives updates.
-  // ----------------------------------------------------------------
+  // Poll for document processing completion
   useEffect(() => {
     if (!documentId || docDetails?.status !== "processing") return;
 
-    const statusMessages = [
-      "📄 Extracting text from pages...",
-      "✂️ Chunking pages into searchable segments...",
-      "🤖 Loading AI embedding model (first run ~30s)...",
-      "🔢 Generating BGE vector embeddings...",
-      "🗄️ Indexing chunks into ChromaDB...",
-      "⏳ Almost done — finalising index...",
-    ];
-    let count = 0;
-
     const interval = setInterval(async () => {
-      // Rotate status message every tick
-      setStatus(statusMessages[count % statusMessages.length]);
-      count++;
-
       try {
         const polled = await getDocument(documentId);
         setDocDetails(polled);
@@ -169,12 +261,8 @@ export function LearningDashboard() {
         if (polled.status === "ready") {
           clearInterval(interval);
           setDocumentName(polled.filename);
-          setStatus(
-            `✓ ${polled.filename} indexed — ${polled.page_count} pages, ${polled.chunk_count} chunks, ${polled.extracted_characters.toLocaleString()} chars.`
-          );
-          // Refresh document list
+          setStatus(`✓ ${polled.filename} ready for study.`);
           refreshDocumentList();
-          // Auto-generate notes
           generateNotes(polled.id)
             .then(setNotes)
             .catch(() => {});
@@ -183,7 +271,7 @@ export function LearningDashboard() {
           setStatus(`❌ Processing failed: ${polled.error ?? "Unknown error"}`);
         }
       } catch {
-        // Network blip — keep polling
+        // Keep polling
       }
     }, 2000);
 
@@ -200,31 +288,33 @@ export function LearningDashboard() {
     setStatus(`Uploading ${file.name}...`);
     try {
       const { uploadDocument } = await import("@/lib/documents-api");
-      // Backend returns immediately with status="processing" — heavy work runs in background
       const doc = await uploadDocument(file);
 
-      // Set state so the polling useEffect kicks in automatically
       setDocumentId(doc.id);
       setDocumentName(doc.filename);
-      setDocDetails(doc);         // status = "processing" → triggers the polling effect
+      setDocDetails(doc);
       setAnswer(undefined);
       setNotes(undefined);
       setQuiz(undefined);
+      setVisual(undefined);
+      setStyleExplanation(undefined);
       setCurrentQuestionIndex(0);
       setSubmittedIndexes(new Set());
       setQuizResults([]);
-      setStatus("📄 PDF received — extracting text and generating embeddings...");
+      setStatus("📄 PDF uploaded — indexing chunks into vector store...");
 
-      // Immediately show in document list
+      setNav("My materials");
       refreshDocumentList();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Upload failed. Is the backend running?");
     } finally {
-      // Release the upload button right away — polling runs independently
       setBusy(false);
     }
   };
 
+  const triggerGlobalUpload = () => {
+    fileInput.current?.click();
+  };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -254,10 +344,14 @@ export function LearningDashboard() {
     setAnswer(undefined);
     setNotes(undefined);
     setQuiz(undefined);
+    setVisual(undefined);
+    setStyleExplanation(undefined);
     setCurrentQuestionIndex(0);
     setSubmittedIndexes(new Set());
     setQuizResults([]);
-    setStatus(`Switched to "${doc.filename}" — ${doc.page_count} pages, ${doc.chunk_count} chunks.`);
+    setStatus(`Active material set to "${doc.filename}".`);
+
+    generateNotes(doc.id).then(setNotes).catch(() => {});
   };
 
   const ask = async (event: React.FormEvent) => {
@@ -277,13 +371,13 @@ export function LearningDashboard() {
   };
 
   const loadNotes = async () => {
-    if (!documentId) return setStatus("Please upload a PDF document first.");
+    if (!documentId) return setStatus("Please select or upload material first.");
     setBusy(true);
-    setStatus("Analyzing document & generating grounded summary...");
+    setStatus("Generating summary & notes...");
     try {
       const res = await generateNotes(documentId);
       setNotes(res);
-      setStatus("Summary & Study Notes generated successfully!");
+      setStatus("Summary & Study Notes updated!");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not create notes.");
     } finally {
@@ -291,20 +385,24 @@ export function LearningDashboard() {
     }
   };
 
-  const loadQuiz = async () => {
-    if (!documentId) return setStatus("Please upload a PDF document first.");
+  const startQuiz = async (mode: "adaptive" | "standard" = quizMode) => {
+    if (!documentId) return setStatus("Please select or upload material first.");
     setBusy(true);
-    setStatus("Generating diagnostic quiz from material...");
+    setQuizMode(mode);
+    setStatus(mode === "adaptive" ? "Generating adaptive quiz targeted to your weak topics..." : "Generating diagnostic quiz...");
     try {
-      const res = await generateQuiz(documentId);
+      const res = mode === "adaptive"
+        ? await generateAdaptiveQuiz(documentId, learnerId)
+        : await generateQuiz(documentId);
+
       setQuiz(res);
       setCurrentQuestionIndex(0);
       setSelectedChoice(undefined);
       setSubmittedIndexes(new Set());
       setQuizResults([]);
-      setStatus("Diagnostic quiz generated!");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not create a quiz.");
+      setStatus(mode === "adaptive" ? "⚡ Adaptive quiz generated!" : "Diagnostic quiz ready!");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Could not generate quiz.");
     } finally {
       setBusy(false);
     }
@@ -337,11 +435,11 @@ export function LearningDashboard() {
 
       if (result.misconception) {
         setInsight(result.misconception);
-        setStatus("Misconception detected! Your profile was updated with targeted learning insights.");
+        setStatus("Misconception detected! Learning profile updated with target insight.");
       } else if (isCorrect) {
-        setStatus("Correct! Your mastery and confidence alignment score increased.");
+        setStatus("Correct! Your mastery score increased.");
       } else {
-        setStatus("Incorrect — your learning profile was updated to adapt future explanations.");
+        setStatus("Incorrect — learning profile updated to adapt future questions.");
       }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not record your answer.");
@@ -364,7 +462,7 @@ export function LearningDashboard() {
   const handleVerificationCheck = () => {
     if (!activeRepairModal || verificationChoice === undefined) return;
     if (verificationChoice === activeRepairModal.verification_correct_index) {
-      setVerificationResult("Correct! Mental model repaired. Your learning profile updated.");
+      setVerificationResult("Correct! Mental model repaired. Profile updated.");
       refreshProfile();
     } else {
       setVerificationResult("Not quite — review the Scientific Reality section above and try again.");
@@ -372,15 +470,17 @@ export function LearningDashboard() {
   };
 
   const activeInsight = insight ?? profile?.recent_misconceptions[0];
-  const navItems = ["Overview", "My materials", "Study notes", "Practice", "Learning profile", "YouTube"];
 
-  // Visual explainer handler
+  // Consolidated 5 Navigation Tabs (PDF and YouTube unified into My Materials)
+  const navItems = ["Overview", "My materials", "Study notes", "Practice", "Learning profile"];
+
   const loadVisual = async () => {
-    if (!documentId) return setStatus("Please upload a PDF document first.");
+    if (!documentId) return setStatus("Please select or upload material first.");
     setVisualBusy(true);
     setStatus("Generating concept map...");
     try {
-      const v = await generateVisual(documentId);
+      const isYt = documentId.startsWith("yt-");
+      const v = await generateVisual(documentId, isYt);
       setVisual(v);
       setStatus("Concept map generated!");
     } catch (e) {
@@ -390,13 +490,13 @@ export function LearningDashboard() {
     }
   };
 
-  // Explain in style handler
   const loadStyleExplanation = async () => {
     if (!documentId || !explainTopic.trim()) return;
     setExplainBusy(true);
     setStatus(`Generating ${explainStyle} explanation...`);
     try {
-      const res = await explainInStyle(documentId, explainTopic, explainStyle);
+      const isYt = documentId.startsWith("yt-");
+      const res = await explainInStyle(documentId, explainTopic, explainStyle, isYt);
       setStyleExplanation(res);
       setStatus("");
     } catch (e) {
@@ -406,7 +506,6 @@ export function LearningDashboard() {
     }
   };
 
-  // YouTube ingestion handler
   const handleYoutubeIngest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!youtubeUrl.trim()) return;
@@ -414,10 +513,16 @@ export function LearningDashboard() {
     setStatus("Fetching YouTube transcript and indexing...");
     try {
       const result = await ingestYoutube(youtubeUrl);
-      setYoutubeResult(result);
       setDocumentId(result.document_id);
       setDocumentName(result.title);
-      setStatus(`✓ ${result.chunk_count} chunks indexed from ${result.total_words.toLocaleString()} words (${result.language})`);
+      setAnswer(undefined);
+      setNotes(undefined);
+      setQuiz(undefined);
+      setVisual(undefined);
+      setStyleExplanation(undefined);
+      setStatus(`✓ YouTube video "${result.title}" indexed and ready for study.`);
+      setYoutubeUrl("");
+      refreshDocumentList();
     } catch (e) {
       setStatus(e instanceof Error ? e.message : "Failed to ingest YouTube video.");
     } finally {
@@ -475,14 +580,49 @@ export function LearningDashboard() {
             <button
               className="upload"
               disabled={busy}
-              onClick={() => fileInput.current?.click()}
+              onClick={triggerGlobalUpload}
             >
               {busy ? "Uploading..." : "+ Upload PDF"}
             </button>
           </div>
         </header>
 
-        {/* Processing banner — visible while backend indexes the PDF */}
+        {/* Global Active Material Context Bar */}
+        {documentName && (
+          <div
+            style={{
+              background: "#f0efff",
+              border: "1px solid #dcd7fe",
+              borderRadius: "10px",
+              padding: "10px 16px",
+              marginBottom: "20px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "16px" }}>{documentId?.startsWith("yt-") ? "📺" : "📄"}</span>
+              <div>
+                <span style={{ fontSize: "10px", fontWeight: "700", color: "#564ad9", textTransform: "uppercase", letterSpacing: "0.6px" }}>
+                  ACTIVE MATERIAL
+                </span>
+                <p style={{ margin: "2px 0 0", fontSize: "14px", fontWeight: "700", color: "#202236" }}>
+                  {documentName}
+                </p>
+              </div>
+            </div>
+            <button
+              className="text-button"
+              style={{ fontSize: "12px" }}
+              onClick={() => setNav("My materials")}
+            >
+              Switch material →
+            </button>
+          </div>
+        )}
+
+        {/* Processing Banner */}
         {docDetails?.status === "processing" && (
           <div
             style={{
@@ -496,13 +636,13 @@ export function LearningDashboard() {
               gap: "12px",
             }}
           >
-            <span style={{ fontSize: "22px", animation: "spin 2s linear infinite", display: "inline-block" }}>⚙️</span>
+            <span style={{ fontSize: "22px", display: "inline-block" }}>⚙️</span>
             <div>
               <p style={{ margin: 0, fontWeight: 700, fontSize: "13px", color: "#3730a3" }}>
                 Indexing {documentName}...
               </p>
               <p style={{ margin: 0, fontSize: "12px", color: "#6366f1" }}>
-                {status || "Processing PDF — extracting text and generating embeddings..."}
+                Extracting text and generating vector embeddings into ChromaDB...
               </p>
             </div>
           </div>
@@ -530,12 +670,12 @@ export function LearningDashboard() {
               <Card className="next-card">
                 <p className="eyebrow">QUICK ACTION</p>
                 <h3>
-                  {documentName ? `${documentName}` : "Upload your study PDF"}
+                  {documentName ? `${documentName}` : "Select or Upload Study Material"}
                 </h3>
                 <p className="muted">
                   {documentName
-                    ? `${docDetails?.page_count ?? 2} pages indexed. Generate AI Notes & Summary.`
-                    : "Upload a PDF to extract text, create vector embeddings, and generate a summary."}
+                    ? "Material ready. Open Study Notes, Practice, or Concept Maps."
+                    : "Upload a PDF or paste a YouTube URL to extract text and generate AI study tools."}
                 </p>
                 <button
                   className="primary"
@@ -543,11 +683,11 @@ export function LearningDashboard() {
                     if (documentName) {
                       setNav("Study notes");
                     } else {
-                      fileInput.current?.click();
+                      setNav("My materials");
                     }
                   }}
                 >
-                  {documentName ? "View Summary & Notes" : "Upload PDF now"} <span>→</span>
+                  {documentName ? "Open Study Workspace" : "Add Material"} <span>→</span>
                 </button>
               </Card>
             </div>
@@ -586,7 +726,7 @@ export function LearningDashboard() {
                   </ResponsiveContainer>
                 ) : (
                   <p className="muted">
-                    No mastery data yet. Upload a PDF and complete a diagnostic quiz.
+                    No mastery data yet. Upload material and complete a diagnostic quiz.
                   </p>
                 )}
               </div>
@@ -614,82 +754,80 @@ export function LearningDashboard() {
           </>
         )}
 
-        {/* TAB 2: MY MATERIALS */}
+        {/* TAB 2: MY MATERIALS (Unified PDF + YouTube Ingest Hub) */}
         {nav === "My materials" && (
           <div>
             <Card className="ask">
-              <h3>PDF Document Upload & Indexing</h3>
-              <p>Upload any PDF textbook, paper, or notes. PyMuPDF extracts text and indexes chunks into ChromaDB with BGE embeddings.</p>
-
-              {/* Drag-and-Drop Upload Zone */}
-              <div
-                style={{
-                  border: `2px dashed ${isDragOver ? "#6255ef" : "#d9d6f8"}`,
-                  borderRadius: "12px",
-                  padding: "36px 20px",
-                  textAlign: "center",
-                  background: isDragOver ? "#f0efff" : "#f9f8fe",
-                  cursor: "pointer",
-                  marginTop: "16px",
-                  transition: "all 0.18s ease",
-                  transform: isDragOver ? "scale(1.01)" : "scale(1)",
-                }}
-                onClick={() => fileInput.current?.click()}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-              >
-                <div style={{ fontSize: "32px", marginBottom: "8px" }}>
-                  {isDragOver ? "📂" : "📄"}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "10px" }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>Add Learning Material</h3>
+                  <p style={{ margin: 0, fontSize: "13px", color: "#747789" }}>Index PDF textbooks or YouTube video transcripts into ChromaDB vector store.</p>
                 </div>
-                <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: isDragOver ? "#6255ef" : "#564ad9", fontWeight: "700" }}>
-                  {busy ? "Processing PDF document..." : isDragOver ? "Drop to upload!" : "Click to select or drag & drop a PDF file here"}
-                </h4>
-                <p style={{ margin: 0, fontSize: "12px", color: "#85889a" }}>
-                  Supports text-based PDF documents up to 20MB
-                </p>
-              </div>
-
-              {/* Active document badge */}
-              {documentName && (
-                <div
-                  style={{
-                    marginTop: "20px",
-                    padding: "16px",
-                    background: "#f0efff",
-                    borderRadius: "10px",
-                    border: "1px solid #dcd7fe",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <div>
-                    <span style={{ fontSize: "11px", fontWeight: "700", color: "#564ad9", textTransform: "uppercase" }}>
-                      ACTIVE INDEXED MATERIAL
-                    </span>
-                    <h4 style={{ margin: "4px 0 2px", fontSize: "15px", color: "#202236", fontWeight: "700" }}>
-                      {documentName}
-                    </h4>
-                    <p style={{ margin: 0, fontSize: "12px", color: "#747789" }}>
-                      {docDetails ? `${docDetails.page_count} Pages · ${docDetails.chunk_count} Chunks · ${docDetails.extracted_characters} Characters Extracted` : "Indexed and ready for study."}
-                    </p>
-                  </div>
+                <div style={{ display: "flex", gap: "6px", background: "#f0efff", padding: "4px", borderRadius: "8px" }}>
                   <button
-                    className="primary"
-                    onClick={() => setNav("Study notes")}
+                    className={ingestMode === "pdf" ? "primary" : "text-button"}
+                    style={{ padding: "6px 14px", fontSize: "12px" }}
+                    onClick={() => setIngestMode("pdf")}
                   >
-                    Generate Summary →
+                    📄 PDF Document
+                  </button>
+                  <button
+                    className={ingestMode === "youtube" ? "primary" : "text-button"}
+                    style={{ padding: "6px 14px", fontSize: "12px" }}
+                    onClick={() => setIngestMode("youtube")}
+                  >
+                    📺 YouTube Video
                   </button>
                 </div>
+              </div>
+
+              {ingestMode === "pdf" ? (
+                <div
+                  style={{
+                    border: `2px dashed ${isDragOver ? "#6255ef" : "#d9d6f8"}`,
+                    borderRadius: "12px",
+                    padding: "36px 20px",
+                    textAlign: "center",
+                    background: isDragOver ? "#f0efff" : "#f9f8fe",
+                    cursor: "pointer",
+                    marginTop: "12px",
+                    transition: "all 0.18s ease",
+                  }}
+                  onClick={triggerGlobalUpload}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
+                  <div style={{ fontSize: "32px", marginBottom: "8px" }}>
+                    {isDragOver ? "📂" : "📄"}
+                  </div>
+                  <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: isDragOver ? "#6255ef" : "#564ad9", fontWeight: "700" }}>
+                    {busy ? "Processing PDF document..." : isDragOver ? "Drop to upload!" : "Click to select or drag & drop a PDF file"}
+                  </h4>
+                  <p style={{ margin: 0, fontSize: "12px", color: "#85889a" }}>
+                    Supports text-based PDF documents up to 20MB
+                  </p>
+                </div>
+              ) : (
+                <form onSubmit={handleYoutubeIngest} style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
+                  <input
+                    value={youtubeUrl}
+                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    placeholder="Paste YouTube video URL (e.g. https://www.youtube.com/watch?v=...)"
+                    style={{ flex: 1, minWidth: "260px", padding: "11px 16px", borderRadius: "9px", border: "1px solid #dcd7fe", fontSize: "14px", background: "#fafafa", outline: "none" }}
+                  />
+                  <button className="primary" type="submit" disabled={youtubeBusy || !youtubeUrl.trim()}>
+                    {youtubeBusy ? "Indexing..." : "Index Video"} ↑
+                  </button>
+                </form>
               )}
             </Card>
 
-            {/* Document History */}
+            {/* Document History & Materials List */}
             {documentList.length > 0 && (
               <Card className="ask" style={{ marginTop: "18px" }}>
-                <h3>Previously Uploaded Documents</h3>
-                <p>All documents indexed this session and from previous sessions.</p>
+                <h3>All Indexed Materials</h3>
+                <p>Select any material to set it as your active study context.</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "12px" }}>
                   {documentList.map((doc) => (
                     <div
@@ -708,7 +846,7 @@ export function LearningDashboard() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
                           <span style={{ fontSize: "14px", fontWeight: "600", color: "#202236", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            📄 {doc.filename}
+                            {doc.id.startsWith("yt-") ? "📺" : "📄"} {doc.filename}
                           </span>
                           <StatusBadge status={doc.status} />
                           {documentId === doc.id && (
@@ -719,9 +857,9 @@ export function LearningDashboard() {
                         </div>
                         <p style={{ margin: 0, fontSize: "12px", color: "#85889a" }}>
                           {doc.status === "ready"
-                            ? `${doc.page_count} pages · ${doc.chunk_count} chunks · ${doc.extracted_characters.toLocaleString()} chars`
+                            ? `${doc.page_count} page(s) · ${doc.chunk_count} chunk(s)`
                             : doc.status === "failed"
-                            ? "Processing failed — try re-uploading"
+                            ? "Processing failed"
                             : "Processing..."}
                         </p>
                       </div>
@@ -731,7 +869,7 @@ export function LearningDashboard() {
                           style={{ marginLeft: "12px", flexShrink: 0, padding: "8px 14px", fontSize: "12px" }}
                           onClick={() => activateDocument(doc)}
                         >
-                          Use this →
+                          Study this →
                         </button>
                       )}
                     </div>
@@ -745,343 +883,274 @@ export function LearningDashboard() {
         {/* TAB 3: STUDY NOTES */}
         {nav === "Study notes" && (
           <>
-            <Card className="ask">
-              <h3>AI Summary & Grounded Study Notes</h3>
-              <p>Generates an executive overview, key concepts dictionary, and grounded study notes from your uploaded PDF.</p>
-
-              <button className="primary" disabled={busy || !documentId} onClick={loadNotes}>
-                {notes ? "Regenerate Summary & Notes" : "Generate Summary & Notes"}
-              </button>
-
-              {!documentId && (
-                <p style={{ marginTop: "14px", color: "#e53e3e", fontSize: "13px" }}>
-                  ⚠️ Please upload a PDF document first under "My materials" or using the "+ Upload PDF" button.
-                </p>
-              )}
-
-              {notes && (
-                <div className="study-answer" style={{ marginTop: "20px" }}>
-                  <b>EXECUTIVE SUMMARY</b>
-                  <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#202236", fontWeight: "500" }}>
-                    {notes.summary || "Summary generated from indexed source material."}
-                  </p>
-
-                  {notes.key_concepts && notes.key_concepts.length > 0 && (
-                    <>
-                      <b style={{ marginTop: "18px" }}>KEY CONCEPTS & DEFINITIONS</b>
-                      <div className="concepts-grid">
-                        {notes.key_concepts.map((kc, idx) => (
-                          <div key={idx} className="concept-card">
-                            <h4>{kc.term}</h4>
-                            <p>{kc.definition}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-
-                  <b style={{ marginTop: "20px" }}>GROUNDED STUDY NOTES</b>
-                  <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.65", color: "#34374c", fontSize: "13.5px" }}>
-                    {notes.notes}
+            {!documentId ? (
+              <EmptyDocumentState onAction={() => setNav("My materials")} />
+            ) : (
+              <>
+                <Card className="ask">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
+                    <div>
+                      <h3>AI Summary & Grounded Study Notes</h3>
+                      <p>Executive overview, key concepts dictionary, and grounded study notes from <strong>{documentName}</strong>.</p>
+                    </div>
+                    <button className="primary" disabled={busy} onClick={loadNotes}>
+                      {notes ? "Regenerate Notes" : "Generate Notes"}
+                    </button>
                   </div>
 
-                  {notes.citations && notes.citations.length > 0 && (
-                    <>
-                      <b style={{ marginTop: "18px" }}>SOURCE CITATIONS & PROVENANCE</b>
-                      <div className="citations">
-                        {notes.citations.map((c) => (
-                          <span key={c.chunk_id}>Source · Page {c.page_number}</span>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </Card>
+                  {notes && (
+                    <div className="study-answer" style={{ marginTop: "20px" }}>
+                      <b>EXECUTIVE SUMMARY</b>
+                      <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#202236", fontWeight: "500" }}>
+                        {notes.summary || "Summary generated from indexed source material."}
+                      </p>
 
-            {/* Visual Concept Map Panel */}
-            {documentId && (
-              <Card className="ask" style={{ marginTop: "18px" }}>
-                <h3>🗺️ Visual Concept Map</h3>
-                <p>Generate an AI-powered Mermaid diagram showing how the key concepts in your document relate to each other.</p>
-                <button className="primary" disabled={visualBusy} onClick={loadVisual}>
-                  {visualBusy ? "Generating map..." : visual ? "Regenerate Concept Map" : "Generate Concept Map"}
-                </button>
-                {visual && (
-                  <div style={{ marginTop: "20px" }}>
-                    <b style={{ color: "#564ad9", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px" }}>
-                      {visual.title}
-                    </b>
-                    {/* Mermaid diagram rendered via CDN script */}
-                    <div
-                      className="mermaid"
-                      style={{
-                        marginTop: "12px",
-                        padding: "20px",
-                        background: "#f7f6ff",
-                        borderRadius: "12px",
-                        border: "1px solid #dcd7fe",
-                        overflowX: "auto",
-                        fontSize: "13px",
-                      }}
-                      ref={(el) => {
-                        if (el && visual.mermaid_code) {
-                          el.textContent = visual.mermaid_code;
-                          // @ts-ignore
-                          if (typeof window !== "undefined" && (window as any).mermaid) {
-                            el.removeAttribute("data-processed");
-                            // @ts-ignore
-                            (window as any).mermaid.run({ nodes: [el] });
-                          }
-                        }
-                      }}
-                    >
-                      {visual.mermaid_code}
+                      {notes.key_concepts && notes.key_concepts.length > 0 && (
+                        <>
+                          <b style={{ marginTop: "18px" }}>KEY CONCEPTS & DEFINITIONS</b>
+                          <div className="concepts-grid">
+                            {notes.key_concepts.map((kc, idx) => (
+                              <div key={idx} className="concept-card">
+                                <h4>{kc.term}</h4>
+                                <p>{kc.definition}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+
+                      <b style={{ marginTop: "20px" }}>GROUNDED STUDY NOTES</b>
+                      <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.65", color: "#34374c", fontSize: "13.5px" }}>
+                        {notes.notes}
+                      </div>
+
+                      {notes.citations && notes.citations.length > 0 && (
+                        <>
+                          <b style={{ marginTop: "18px" }}>SOURCE CITATIONS & PROVENANCE</b>
+                          <div className="citations">
+                            {notes.citations.map((c) => (
+                              <span key={c.chunk_id}>Source · Page {c.page_number}</span>
+                            ))}
+                          </div>
+                        </>
+                      )}
                     </div>
-                    {visual.concept_nodes.length > 0 && (
-                      <>
-                        <b style={{ marginTop: "18px", display: "block", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px", color: "#564ad9" }}>CONCEPT NODES</b>
-                        <div className="concepts-grid" style={{ marginTop: "10px" }}>
-                          {visual.concept_nodes.map((node) => (
-                            <div key={node.id} className="concept-card" style={{
-                              borderLeft: `3px solid ${ node.type === "core" ? "#6255ef" : node.type === "process" ? "#f59e0b" : node.type === "outcome" ? "#22c55e" : "#94a3b8" }`,
-                            }}>
-                              <h4 style={{ margin: "0 0 4px", fontSize: "13px" }}>{node.label}</h4>
-                              <p style={{ margin: 0, fontSize: "12px" }}>{node.summary}</p>
-                              <span style={{ fontSize: "10px", color: "#9294a6", textTransform: "uppercase" }}>{node.type}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    )}
+                  )}
+                </Card>
+
+                {/* Shared Concept Map Component */}
+                <ConceptMapCard
+                  title={visual?.title}
+                  mermaidCode={visual?.mermaid_code}
+                  conceptNodes={visual?.concept_nodes}
+                  busy={visualBusy}
+                  onGenerate={loadVisual}
+                  buttonText="Generate Concept Map"
+                />
+
+                {/* Explain in Different Styles Panel */}
+                <Card className="ask" style={{ marginTop: "18px" }}>
+                  <h3>🎨 Explain in Different Styles</h3>
+                  <p>Re-explain any topic from your document in a learning style that works for you — from beginner-friendly to code analogies.</p>
+                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end", marginTop: "12px" }}>
+                    <div style={{ flex: 1, minWidth: "200px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: 700, color: "#564ad9", textTransform: "uppercase", letterSpacing: "0.6px", display: "block", marginBottom: "6px" }}>TOPIC TO EXPLAIN</label>
+                      <input
+                        value={explainTopic}
+                        onChange={(e) => setExplainTopic(e.target.value)}
+                        placeholder="e.g. Key principles in material"
+                        style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid #ddd", fontSize: "14px", background: "#fafafa", outline: "none" }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: "11px", fontWeight: 700, color: "#564ad9", textTransform: "uppercase", letterSpacing: "0.6px", display: "block", marginBottom: "6px" }}>STYLE</label>
+                      <select
+                        value={explainStyle}
+                        onChange={(e) => setExplainStyle(e.target.value as ExplainStyle)}
+                        style={{ padding: "10px 14px", borderRadius: "8px", border: "1px solid #ddd", fontSize: "13px", background: "#fafafa", cursor: "pointer", outline: "none" }}
+                      >
+                        {(["beginner", "visual", "programmer", "researcher", "story", "interview"] as ExplainStyle[]).map((s) => (
+                          <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      className="primary"
+                      disabled={explainBusy || !explainTopic.trim()}
+                      onClick={loadStyleExplanation}
+                    >
+                      {explainBusy ? "Generating..." : "Explain"} →
+                    </button>
+                  </div>
+                  {styleExplanation && (
+                    <div className="study-answer" style={{ marginTop: "20px" }}>
+                      <b style={{ fontSize: "11px", letterSpacing: "0.6px" }}>
+                        {styleExplanation.style.toUpperCase()} EXPLANATION — {styleExplanation.topic}
+                      </b>
+                      <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.7", color: "#34374c", fontSize: "13.5px", marginTop: "10px" }}>
+                        {styleExplanation.content}
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              </>
+            )}
+          </>
+        )}
+
+        {/* TAB 4: PRACTICE */}
+        {nav === "Practice" && (
+          <>
+            {!documentId ? (
+              <EmptyDocumentState onAction={() => setNav("My materials")} />
+            ) : (
+              <Card className="ask">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
+                  <div>
+                    <h3>Diagnostic practice</h3>
+                    <p>Questions target reasoning and misconceptions to update your Learning Profile.</p>
+                  </div>
+                  <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                    <button className="primary" disabled={busy} onClick={() => startQuiz("adaptive")}>
+                      ⚡ Start Adaptive Quiz
+                    </button>
+                    <button className="text-button" disabled={busy} onClick={() => startQuiz("standard")} style={{ fontSize: "13px" }}>
+                      Standard Mode
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quiz completed summary */}
+                {quiz && allQuestionsAnswered && (
+                  <div
+                    style={{
+                      marginTop: "20px",
+                      padding: "20px 24px",
+                      background: "linear-gradient(120deg, #f0efff, #f0fff4)",
+                      border: "1px solid #c5bdfc",
+                      borderRadius: "12px",
+                      textAlign: "center",
+                    }}
+                  >
+                    <div style={{ fontSize: "36px", marginBottom: "8px" }}>
+                      {quizScore === quiz.questions.length ? "🎉" : quizScore >= quiz.questions.length / 2 ? "👍" : "📚"}
+                    </div>
+                    <h3 style={{ color: "#202236", marginBottom: "6px" }}>
+                      Quiz complete! {quizScore}/{quiz.questions.length} correct
+                    </h3>
+                    <p style={{ color: "#666a7c", fontSize: "13px", margin: 0 }}>
+                      {quizScore === quiz.questions.length
+                        ? "Excellent! Perfect score — your mastery is rising."
+                        : quizScore >= quiz.questions.length / 2
+                        ? "Good effort! Review the incorrect answers in your Learning Profile."
+                        : "Keep practicing — your profile will adapt to help you improve."}
+                    </p>
+                    <button
+                      className="primary"
+                      style={{ marginTop: "16px" }}
+                      onClick={() => startQuiz("adaptive")}
+                      disabled={busy}
+                    >
+                      Try a new adaptive quiz →
+                    </button>
                   </div>
                 )}
-              </Card>
-            )}
 
-            {/* Explain in Different Styles Panel */}
-            {documentId && (
-              <Card className="ask" style={{ marginTop: "18px" }}>
-                <h3>🎨 Explain in Different Styles</h3>
-                <p>Re-explain any topic from your document in a learning style that works for you — from beginner-friendly to academic to code analogies.</p>
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "flex-end", marginTop: "12px" }}>
-                  <div style={{ flex: 1, minWidth: "200px" }}>
-                    <label style={{ fontSize: "11px", fontWeight: 700, color: "#564ad9", textTransform: "uppercase", letterSpacing: "0.6px", display: "block", marginBottom: "6px" }}>TOPIC TO EXPLAIN</label>
-                    <input
-                      value={explainTopic}
-                      onChange={(e) => setExplainTopic(e.target.value)}
-                      placeholder="e.g. How photosynthesis works"
-                      style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid #ddd", fontSize: "14px", background: "#fafafa", outline: "none" }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: "11px", fontWeight: 700, color: "#564ad9", textTransform: "uppercase", letterSpacing: "0.6px", display: "block", marginBottom: "6px" }}>STYLE</label>
-                    <select
-                      value={explainStyle}
-                      onChange={(e) => setExplainStyle(e.target.value as ExplainStyle)}
-                      style={{ padding: "10px 14px", borderRadius: "8px", border: "1px solid #ddd", fontSize: "13px", background: "#fafafa", cursor: "pointer", outline: "none" }}
-                    >
-                      {(["beginner", "visual", "programmer", "researcher", "story", "interview"] as ExplainStyle[]).map((s) => (
-                        <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <button
-                    className="primary"
-                    disabled={explainBusy || !explainTopic.trim()}
-                    onClick={loadStyleExplanation}
-                  >
-                    {explainBusy ? "Generating..." : "Explain"} →
-                  </button>
-                </div>
-                {styleExplanation && (
-                  <div className="study-answer" style={{ marginTop: "20px" }}>
-                    <b style={{ fontSize: "11px", letterSpacing: "0.6px" }}>
-                      {styleExplanation.style.toUpperCase()} EXPLANATION — {styleExplanation.topic}
-                    </b>
-                    <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.7", color: "#34374c", fontSize: "13.5px", marginTop: "10px" }}>
-                      {styleExplanation.content}
+                {/* Active question */}
+                {quiz?.questions[currentQuestionIndex] && !allQuestionsAnswered && (
+                  <div className="study-answer">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                      <b>QUESTION {currentQuestionIndex + 1} OF {quiz.questions.length}</b>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        {quiz.questions.map((_, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              width: "28px",
+                              height: "6px",
+                              borderRadius: "3px",
+                              background: submittedIndexes.has(i)
+                                ? (quizResults[i]?.correct ? "#22c55e" : "#ef4444")
+                                : i === currentQuestionIndex
+                                ? "#6255ef"
+                                : "#e5e5f0",
+                              transition: "background 0.2s ease",
+                            }}
+                          />
+                        ))}
+                      </div>
                     </div>
+
+                    <p style={{ fontSize: "14px", fontWeight: "600", color: "#202236" }}>
+                      {quiz.questions[currentQuestionIndex].question}
+                    </p>
+
+                    {quiz.questions[currentQuestionIndex].choices.map((choice, index) => {
+                      const isSubmitted = submittedIndexes.has(currentQuestionIndex);
+                      const thisResult = quizResults[currentQuestionIndex];
+                      const correctIdx = quiz.questions[currentQuestionIndex].answer_index;
+                      let extraStyle: React.CSSProperties = {};
+                      if (isSubmitted) {
+                        if (index === correctIdx) extraStyle = { background: "#f0fff4", borderColor: "#22c55e", color: "#15803d" };
+                        else if (index === thisResult?.choice && !thisResult?.correct) extraStyle = { background: "#fff5f5", borderColor: "#ef4444", color: "#b91c1c" };
+                      }
+                      return (
+                        <button
+                          key={choice}
+                          className={selectedChoice === index && !isSubmitted ? "choice selected" : "choice"}
+                          style={extraStyle}
+                          onClick={() => !isSubmitted && setSelectedChoice(index)}
+                          disabled={isSubmitted}
+                        >
+                          {choice}
+                        </button>
+                      );
+                    })}
+
+                    {submittedIndexes.has(currentQuestionIndex) && (
+                      <div style={{ marginTop: "12px", padding: "12px 16px", background: "#f7f6ff", borderRadius: "9px", fontSize: "13px", color: "#565a6d" }}>
+                        <strong style={{ color: "#564ad9", fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase" }}>Explanation</strong>
+                        <p style={{ margin: "6px 0 0" }}>{quiz.questions[currentQuestionIndex].explanation}</p>
+                      </div>
+                    )}
+
+                    <p className="eyebrow" style={{ marginTop: "16px" }}>
+                      HOW CONFIDENT ARE YOU IN THIS REASONING?
+                    </p>
+                    <div className="confidence-selector">
+                      {[1, 2, 3, 4, 5].map((lvl) => (
+                        <button
+                          key={lvl}
+                          className={confidence === lvl ? "confidence-btn active" : "confidence-btn"}
+                          onClick={() => setConfidence(lvl)}
+                          disabled={submittedIndexes.has(currentQuestionIndex)}
+                        >
+                          {lvl === 1 ? "1 (Guess)" : lvl === 5 ? "5 (Certain)" : `${lvl}`}
+                        </button>
+                      ))}
+                    </div>
+
+                    {!submittedIndexes.has(currentQuestionIndex) ? (
+                      <button
+                        className="primary submit-attempt"
+                        disabled={busy || selectedChoice === undefined}
+                        onClick={submitQuizAttempt}
+                      >
+                        Check my reasoning
+                      </button>
+                    ) : currentQuestionIndex < quiz.questions.length - 1 ? (
+                      <button
+                        className="primary submit-attempt"
+                        onClick={goToNextQuestion}
+                      >
+                        Next Question → ({currentQuestionIndex + 2} of {quiz.questions.length})
+                      </button>
+                    ) : null}
                   </div>
                 )}
               </Card>
             )}
           </>
-        )}
-
-        {/* TAB 4: PRACTICE — Full multi-question quiz */}
-        {nav === "Practice" && (
-          <Card className="ask">
-            <h3>Diagnostic practice</h3>
-            <p>Questions focus on reasoning and misconceptions so your Learning Profile can adapt.</p>
-            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-              <button className="primary" disabled={busy || !documentId} onClick={loadQuiz}>
-                {quiz ? "Regenerate diagnostic quiz" : "Generate a diagnostic quiz"}
-              </button>
-              <button
-                className="primary"
-                style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)", border: "none" }}
-                disabled={busy || !documentId}
-                onClick={async () => {
-                  if (!documentId) return setStatus("Upload a PDF first.");
-                  setBusy(true);
-                  setStatus("Generating adaptive quiz from your weak topics...");
-                  try {
-                    const res = await generateAdaptiveQuiz(documentId, learnerId);
-                    setQuiz(res);
-                    setCurrentQuestionIndex(0);
-                    setSelectedChoice(undefined);
-                    setSubmittedIndexes(new Set());
-                    setQuizResults([]);
-                    setStatus("⚡ Adaptive quiz generated — targeting your weak areas!");
-                  } catch (e) {
-                    setStatus(e instanceof Error ? e.message : "Could not create adaptive quiz.");
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                ⚡ Adaptive Quiz (profile-aware)
-              </button>
-            </div>
-
-            {!documentId && (
-              <p style={{ marginTop: "14px", color: "#e53e3e", fontSize: "13px" }}>
-                ⚠️ Please upload a PDF document first under "My materials" or "+ Upload PDF".
-              </p>
-            )}
-
-            {/* Quiz completed summary */}
-            {quiz && allQuestionsAnswered && (
-              <div
-                style={{
-                  marginTop: "20px",
-                  padding: "20px 24px",
-                  background: "linear-gradient(120deg, #f0efff, #f0fff4)",
-                  border: "1px solid #c5bdfc",
-                  borderRadius: "12px",
-                  textAlign: "center",
-                }}
-              >
-                <div style={{ fontSize: "36px", marginBottom: "8px" }}>
-                  {quizScore === quiz.questions.length ? "🎉" : quizScore >= quiz.questions.length / 2 ? "👍" : "📚"}
-                </div>
-                <h3 style={{ color: "#202236", marginBottom: "6px" }}>
-                  Quiz complete! {quizScore}/{quiz.questions.length} correct
-                </h3>
-                <p style={{ color: "#666a7c", fontSize: "13px", margin: 0 }}>
-                  {quizScore === quiz.questions.length
-                    ? "Excellent! Perfect score — your mastery is rising."
-                    : quizScore >= quiz.questions.length / 2
-                    ? "Good effort! Review the incorrect answers in your Learning Profile."
-                    : "Keep practicing — your profile will adapt to help you improve."}
-                </p>
-                <button
-                  className="primary"
-                  style={{ marginTop: "16px" }}
-                  onClick={loadQuiz}
-                  disabled={busy}
-                >
-                  Try a new quiz →
-                </button>
-              </div>
-            )}
-
-            {/* Active question */}
-            {quiz?.questions[currentQuestionIndex] && !allQuestionsAnswered && (
-              <div className="study-answer">
-                {/* Progress indicator */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                  <b>QUESTION {currentQuestionIndex + 1} OF {quiz.questions.length}</b>
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    {quiz.questions.map((_, i) => (
-                      <div
-                        key={i}
-                        style={{
-                          width: "28px",
-                          height: "6px",
-                          borderRadius: "3px",
-                          background: submittedIndexes.has(i)
-                            ? (quizResults[i]?.correct ? "#22c55e" : "#ef4444")
-                            : i === currentQuestionIndex
-                            ? "#6255ef"
-                            : "#e5e5f0",
-                          transition: "background 0.2s ease",
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <p style={{ fontSize: "14px", fontWeight: "600", color: "#202236" }}>
-                  {quiz.questions[currentQuestionIndex].question}
-                </p>
-
-                {quiz.questions[currentQuestionIndex].choices.map((choice, index) => {
-                  const isSubmitted = submittedIndexes.has(currentQuestionIndex);
-                  const thisResult = quizResults[currentQuestionIndex];
-                  const correctIdx = quiz.questions[currentQuestionIndex].answer_index;
-                  let extraStyle: React.CSSProperties = {};
-                  if (isSubmitted) {
-                    if (index === correctIdx) extraStyle = { background: "#f0fff4", borderColor: "#22c55e", color: "#15803d" };
-                    else if (index === thisResult?.choice && !thisResult?.correct) extraStyle = { background: "#fff5f5", borderColor: "#ef4444", color: "#b91c1c" };
-                  }
-                  return (
-                    <button
-                      key={choice}
-                      className={selectedChoice === index && !isSubmitted ? "choice selected" : "choice"}
-                      style={extraStyle}
-                      onClick={() => !isSubmitted && setSelectedChoice(index)}
-                      disabled={isSubmitted}
-                    >
-                      {choice}
-                    </button>
-                  );
-                })}
-
-                {/* Show explanation after submission */}
-                {submittedIndexes.has(currentQuestionIndex) && (
-                  <div style={{ marginTop: "12px", padding: "12px 16px", background: "#f7f6ff", borderRadius: "9px", fontSize: "13px", color: "#565a6d" }}>
-                    <strong style={{ color: "#564ad9", fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase" }}>Explanation</strong>
-                    <p style={{ margin: "6px 0 0" }}>{quiz.questions[currentQuestionIndex].explanation}</p>
-                  </div>
-                )}
-
-                <p className="eyebrow" style={{ marginTop: "16px" }}>
-                  HOW CONFIDENT ARE YOU IN THIS REASONING?
-                </p>
-                <div className="confidence-selector">
-                  {[1, 2, 3, 4, 5].map((lvl) => (
-                    <button
-                      key={lvl}
-                      className={confidence === lvl ? "confidence-btn active" : "confidence-btn"}
-                      onClick={() => setConfidence(lvl)}
-                      disabled={submittedIndexes.has(currentQuestionIndex)}
-                    >
-                      {lvl === 1 ? "1 (Guess)" : lvl === 5 ? "5 (Certain)" : `${lvl}`}
-                    </button>
-                  ))}
-                </div>
-
-                {!submittedIndexes.has(currentQuestionIndex) ? (
-                  <button
-                    className="primary submit-attempt"
-                    disabled={busy || selectedChoice === undefined}
-                    onClick={submitQuizAttempt}
-                  >
-                    Check my reasoning
-                  </button>
-                ) : currentQuestionIndex < quiz.questions.length - 1 ? (
-                  <button
-                    className="primary submit-attempt"
-                    onClick={goToNextQuestion}
-                  >
-                    Next Question → ({currentQuestionIndex + 2} of {quiz.questions.length})
-                  </button>
-                ) : null}
-              </div>
-            )}
-          </Card>
         )}
 
         {/* TAB 5: LEARNING PROFILE */}
@@ -1115,30 +1184,6 @@ export function LearningDashboard() {
                 <Ring value={profile?.accuracy_rate ?? 0} label="accuracy" />
               </Card>
             </div>
-
-            <div className="section-heading">
-              <div>
-                <h2>Topic breakdown</h2>
-                <p>Individual conceptual understanding across your uploaded subjects.</p>
-              </div>
-            </div>
-
-            <Card className="ask">
-              <div className="chart" style={{ height: "240px" }}>
-                {profile?.topics.length ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={profile.topics}>
-                      <XAxis dataKey="topic" tick={{ fontSize: 12, fill: "#7b8195" }} />
-                      <YAxis domain={[0, 100]} />
-                      <Tooltip />
-                      <Bar dataKey="mastery" fill="#564ad9" radius={[6, 6, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <p className="muted">No topics recorded yet. Take a quiz to populate your profile.</p>
-                )}
-              </div>
-            </Card>
 
             {/* Recent Misconceptions */}
             {profile?.recent_misconceptions && profile.recent_misconceptions.length > 0 && (
@@ -1236,7 +1281,7 @@ export function LearningDashboard() {
                 <div style={{ fontSize: "36px", marginBottom: "12px" }}>📊</div>
                 <h3 style={{ color: "#202236" }}>Your learning profile is ready</h3>
                 <p style={{ color: "#85889a", maxWidth: "380px", margin: "0 auto 16px" }}>
-                  Upload a PDF and complete a diagnostic quiz to start building your personalized learning profile.
+                  Upload material and complete a diagnostic quiz to start building your personalized learning profile.
                 </p>
                 <button className="primary" onClick={() => setNav("Practice")}>
                   Start a diagnostic quiz →
@@ -1246,121 +1291,17 @@ export function LearningDashboard() {
           </div>
         )}
 
-        {/* TAB 6: YOUTUBE */}
-        {nav === "YouTube" && (
-          <div>
-            <Card className="ask">
-              <h3>📺 YouTube Video Ingestion</h3>
-              <p>
-                Paste any YouTube URL to extract its transcript, generate vector embeddings, and
-                use all LearnSphere study tools — quiz, notes, chat, visual maps — on video content.
-              </p>
-              <form onSubmit={handleYoutubeIngest} style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
-                <input
-                  value={youtubeUrl}
-                  onChange={(e) => setYoutubeUrl(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  style={{ flex: 1, minWidth: "260px", padding: "11px 16px", borderRadius: "9px", border: "1px solid #dcd7fe", fontSize: "14px", background: "#fafafa", outline: "none" }}
-                />
-                <button className="primary" type="submit" disabled={youtubeBusy || !youtubeUrl.trim()}>
-                  {youtubeBusy ? "Indexing..." : "Index Video"} ↑
-                </button>
-              </form>
-
-              {youtubeResult && (
-                <div
-                  style={{
-                    marginTop: "20px",
-                    padding: "18px 20px",
-                    background: "linear-gradient(120deg, #f0efff, #f0fff4)",
-                    border: "1px solid #c5bdfc",
-                    borderRadius: "12px",
-                  }}
-                >
-                  <p className="eyebrow" style={{ color: "#564ad9", margin: "0 0 6px" }}>VIDEO INDEXED SUCCESSFULLY</p>
-                  <h4 style={{ margin: "0 0 4px", color: "#202236" }}>{youtubeResult.title}</h4>
-                  <p style={{ margin: 0, fontSize: "12px", color: "#85889a" }}>
-                    {youtubeResult.chunk_count} chunks · {youtubeResult.total_words.toLocaleString()} words · Language: {youtubeResult.language}
-                  </p>
-                  <p style={{ margin: "12px 0 0", fontSize: "13px", color: "#564ad9", fontWeight: 600 }}>
-                    ✓ Document ID <code style={{ background: "#e9e7ff", padding: "2px 6px", borderRadius: "4px", fontSize: "12px" }}>{youtubeResult.document_id}</code> is now active.
-                    Use "Study notes", "Practice", or "Ask about your material" to study this video.
-                  </p>
-                </div>
-              )}
-
-              <div style={{ marginTop: "24px", padding: "16px", background: "#f7f6ff", borderRadius: "10px", fontSize: "13px", color: "#565a6d" }}>
-                <b style={{ fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase", color: "#564ad9" }}>HOW IT WORKS</b>
-                <ol style={{ margin: "10px 0 0", paddingLeft: "20px", lineHeight: "1.8" }}>
-                  <li>LearnSphere fetches the video transcript (no API key needed for public videos with captions)</li>
-                  <li>The transcript is chunked into ~300-word segments with timestamps</li>
-                  <li>BGE embeddings are generated and indexed into ChromaDB</li>
-                  <li>All study tools — chat, notes, quiz, concept map — work on the video content</li>
-                </ol>
-              </div>
-            </Card>
-
-            {youtubeResult && (
-              <Card className="ask" style={{ marginTop: "18px" }}>
-                <h3>🗺️ Video Concept Map</h3>
-                <p>Generate a visual concept map from the indexed video transcript.</p>
-                <button
-                  className="primary"
-                  disabled={visualBusy}
-                  onClick={async () => {
-                    setVisualBusy(true);
-                    setStatus("Generating concept map from video...");
-                    try {
-                      const v = await generateVisual(youtubeResult.document_id, true);
-                      setVisual(v);
-                      setStatus("Video concept map generated!");
-                    } catch (e) {
-                      setStatus(e instanceof Error ? e.message : "Could not generate concept map.");
-                    } finally {
-                      setVisualBusy(false);
-                    }
-                  }}
-                >
-                  {visualBusy ? "Generating..." : visual ? "Regenerate Map" : "Generate Concept Map"}
-                </button>
-                {visual && visual.document_id === youtubeResult.document_id && (
-                  <div style={{ marginTop: "16px" }}>
-                    <b style={{ color: "#564ad9", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px" }}>{visual.title}</b>
-                    <div
-                      className="mermaid"
-                      style={{ marginTop: "10px", padding: "16px", background: "#f7f6ff", borderRadius: "10px", border: "1px solid #dcd7fe", overflowX: "auto" }}
-                      ref={(el) => {
-                        if (el && visual.mermaid_code) {
-                          el.textContent = visual.mermaid_code;
-                          // @ts-ignore
-                          if (typeof window !== "undefined" && (window as any).mermaid) {
-                            el.removeAttribute("data-processed");
-                            // @ts-ignore
-                            (window as any).mermaid.run({ nodes: [el] });
-                          }
-                        }
-                      }}
-                    >
-                      {visual.mermaid_code}
-                    </div>
-                  </div>
-                )}
-              </Card>
-            )}
-          </div>
-        )}
-
-        {/* RAG Grounded Chat Box (Always available) */}
-        <Card className="ask">
+        {/* Unified RAG Grounded Chat Companion */}
+        <Card className="ask" style={{ marginTop: "24px" }}>
           <div>
             <h3>Ask about your material</h3>
-            <p>{documentId ? "Every response includes source page citations." : "Upload a PDF first."}</p>
+            <p>{documentId ? `Grounded in "${documentName}". Source citations included.` : "Upload material to ask grounded questions."}</p>
           </div>
           <form onSubmit={ask}>
             <input
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ask LearnSphere about your PDF concept or reasoning…"
+              placeholder={documentId ? `Ask LearnSphere about "${documentName}"…` : "Upload material to start asking questions..."}
             />
             <button disabled={busy || !documentId} aria-label="Send question">
               ↑

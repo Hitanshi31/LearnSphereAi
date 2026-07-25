@@ -160,6 +160,7 @@ class GroundedStudyService:
                 "### Quick Memory Tip\n"
                 "Give one memorable phrase, mnemonic, or mental model the student can use to remember this.\n\n"
                 "STRICT RULES:\n"
+                "- LANGUAGE REQUIREMENT: You MUST write your entire response strictly in the ENGLISH language ONLY.\n"
                 "- ONLY use information from the provided study material. Never invent facts.\n"
                 "- Write in clear, friendly, conversational English — as if talking to a student face-to-face.\n"
                 "- Avoid jargon unless you immediately explain it in simple terms.\n"
@@ -201,8 +202,9 @@ class GroundedStudyService:
                 '  "notes": "Rich, structured study notes in Markdown. REQUIRED SECTIONS:\n\n### 🎯 What This Is About\nA plain-English paragraph explaining the big picture — what field or topic this covers and what problem it addresses.\n\n### 🔑 Core Concepts Explained\nFor each major concept: explain it simply, then explain the mechanism (how/why it works), then give a real-world example or analogy. Use **bold** for key terms and bullet lists for clarity.\n\n### 🔗 How the Ideas Connect\nA section showing HOW the key concepts relate to each other — cause-and-effect chains, hierarchies, or sequences. Use numbered steps or a flow if sequential.\n\n### ⚠️ Watch Out: Common Mistakes\nList 2-4 common errors or misconceptions students have about this material. For each: state the wrong belief, then explain why it\'s wrong, then state the correct understanding.\n\n### 💡 How to Study This\n3-5 concrete, actionable revision tips specifically tailored to this content (e.g., what to memorise, what to understand deeply, what to practise).\n\n### ✅ Quick-Reference Summary\n5-8 bullet points that capture the most exam-important facts and principles. A student should be able to read just this section for a last-minute refresher."\n'
                 '}\n\n'
                 "CRITICAL RULES:\n"
+                "- LANGUAGE REQUIREMENT: All summary text, key concepts, definitions, and study notes MUST be written strictly in the ENGLISH language ONLY.\n"
                 "- Extract 5-8 key concepts minimum — cover all the important terms a student needs to know.\n"
-                "- Every explanation must be in plain, accessible language. Assume an intelligent student who is new to this topic.\n"
+                "- Every explanation must be in plain, accessible English. Assume an intelligent student who is new to this topic.\n"
                 "- Use analogies, examples, and comparisons wherever they help understanding.\n"
                 "- NEVER invent facts not present in the source material.\n"
                 "- Make the notes genuinely useful — something a student would actually study from, not just read once.\n\n"
@@ -276,6 +278,7 @@ class GroundedStudyService:
                 "You are LearnSphere's expert quiz designer. Using ONLY the provided study material, generate exactly 5 "
                 "diagnostic multiple-choice questions that will genuinely test student understanding — not just memorisation.\n\n"
                 "QUESTION DESIGN RULES:\n"
+                "0. LANGUAGE: ALL questions, options, and teaching explanations MUST be written strictly in the ENGLISH language ONLY.\n"
                 "1. VARIETY: Include a mix of question types across the 5 questions:\n"
                 "   - 1-2 questions testing conceptual understanding ('Why does X happen?', 'What is the relationship between X and Y?')\n"
                 "   - 1-2 questions testing application ('In scenario X, what would happen?', 'Which of these is an example of X?')\n"
@@ -382,6 +385,7 @@ class GroundedStudyService:
             "  ]\n"
             "}\n\n"
             "RULES:\n"
+            "- LANGUAGE: ALL titles, Mermaid labels, and node summaries MUST be generated strictly in the ENGLISH language ONLY.\n"
             "- The Mermaid code must be syntactically valid. Use graph TD.\n"
             "- concept_nodes must include ALL nodes referenced in the diagram.\n"
             "- type field must be exactly one of: core, process, outcome, definition\n"
@@ -473,7 +477,7 @@ class GroundedStudyService:
 
         prompt = (
             f"PERSONA: {persona}\n\n"
-            f"TASK: Explain the topic '{topic}' using ONLY the information from the study material below.\n\n"
+            f"TASK: Explain the topic '{topic}' using ONLY the information from the study material below. WRITE STRICTLY IN THE ENGLISH LANGUAGE ONLY.\n\n"
             "FORMAT YOUR RESPONSE IN MARKDOWN. Use headers, bold, bullet points, and code blocks where appropriate for your style.\n"
             "Length: 200-400 words. Make every word count for this specific learning style.\n\n"
             f"STUDY MATERIAL:\n{self._context(sources)}"
@@ -511,6 +515,7 @@ class GroundedStudyService:
                 "You are LearnSphere's adaptive quiz engine. Generate exactly 5 diagnostic MCQ questions.\n\n"
                 f"{weak_focus}"
                 "RULES:\n"
+                "- LANGUAGE: ALL questions, options, and explanations MUST be generated strictly in the ENGLISH language ONLY.\n"
                 "- Focus on WHY and HOW questions, not just recall.\n"
                 "- Wrong answers must be believable misconceptions, not obviously silly.\n"
                 "- Each explanation must teach, not just confirm.\n\n"
