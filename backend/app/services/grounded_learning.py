@@ -142,6 +142,12 @@ class GroundedStudyService:
         
         try:
             prompt = (
+                "⚠️ MANDATORY LANGUAGE RULE (NON-NEGOTIABLE, HIGHEST PRIORITY): "
+                "Your ENTIRE response MUST be written in ENGLISH ONLY. "
+                "The source material may be in Hindi, Gujarati, Spanish, or any other language — it does NOT matter. "
+                "You MUST translate all concepts, terms, and explanations into English. "
+                "DO NOT output a single word in any language other than English. "
+                "If the source is in Hindi, translate and explain everything in English.\n\n"
                 "You are LearnSphere, a world-class AI tutor who specialises in making complex topics crystal-clear "
                 "for students of all levels. A student has asked you a question about their study material.\n\n"
                 "YOUR TASK: Give a thorough, student-friendly answer that genuinely helps them understand — "
@@ -187,27 +193,34 @@ class GroundedStudyService:
         
         try:
             prompt = (
-                "You are an expert AI tutor and academic writer. A student has uploaded a study document. "
-                "Your job is to create a truly exceptional study guide that a student can actually USE to learn, "
-                "revise, and ace their exams — not just a dry summary.\n\n"
+                "⚠️ MANDATORY LANGUAGE RULE (NON-NEGOTIABLE, HIGHEST PRIORITY): "
+                "Your ENTIRE response — every field in the JSON, every sentence in 'summary', every 'definition', "
+                "every word in 'notes' — MUST be written in ENGLISH ONLY. "
+                "The source document may be in Hindi, Gujarati, Marathi, or any other language. That does NOT matter. "
+                "You MUST read the source material and write ALL output in English, translating as needed. "
+                "DO NOT write any Hindi, Devanagari script, or non-English text anywhere in your response. "
+                "This rule overrides everything else. Translate everything into English.\n\n"
+                "You are an expert AI tutor. A student has uploaded a study document (PDF or video transcript). "
+                "Create a CONCISE, SCANNABLE study guide — not an essay. Every section must use bullet points. "
+                "Be brief and sharp: a student should understand the whole document in under 2 minutes of reading.\n\n"
                 "Return a STRICT JSON object with this EXACT structure (no extra keys, no markdown outside JSON):\n"
                 '{\n'
-                '  "summary": "A 3-4 sentence executive overview written in plain English. Cover: (1) what this document is about, (2) the central idea or mechanism, (3) why it matters or its real-world significance. Make it motivating and engaging — a student should want to read further after reading this.",\n'
+                '  "summary": "2 sentences MAX: (1) what this material is about in one sentence, (2) the single most important takeaway. Then on a new line, list the 5-7 KEY POINTS as a markdown bullet list starting with \\u2022. Example format: What this covers + key insight.\\n\\u2022 Point one\\n\\u2022 Point two\\n\\u2022 Point three",\n'
                 '  "key_concepts": [\n'
                 '    {\n'
-                '      "term": "Exact Term or Concept Name",\n'
-                '      "definition": "2-3 sentence definition that (a) explains what it is in simple language, (b) gives context for WHY it matters, and (c) connects it to other concepts in the document if possible."\n'
+                '      "term": "Term Name",\n'
+                '      "definition": "1-2 sentences: what it is and why it matters. No padding."\n'
                 '    }\n'
                 '  ],\n'
-                '  "notes": "Rich, structured study notes in Markdown. REQUIRED SECTIONS:\n\n### 🎯 What This Is About\nA plain-English paragraph explaining the big picture — what field or topic this covers and what problem it addresses.\n\n### 🔑 Core Concepts Explained\nFor each major concept: explain it simply, then explain the mechanism (how/why it works), then give a real-world example or analogy. Use **bold** for key terms and bullet lists for clarity.\n\n### 🔗 How the Ideas Connect\nA section showing HOW the key concepts relate to each other — cause-and-effect chains, hierarchies, or sequences. Use numbered steps or a flow if sequential.\n\n### ⚠️ Watch Out: Common Mistakes\nList 2-4 common errors or misconceptions students have about this material. For each: state the wrong belief, then explain why it\'s wrong, then state the correct understanding.\n\n### 💡 How to Study This\n3-5 concrete, actionable revision tips specifically tailored to this content (e.g., what to memorise, what to understand deeply, what to practise).\n\n### ✅ Quick-Reference Summary\n5-8 bullet points that capture the most exam-important facts and principles. A student should be able to read just this section for a last-minute refresher."\n'
+                '  "notes": "Structured study notes in Markdown. KEEP IT TIGHT — bullet points only, no paragraphs. REQUIRED SECTIONS:\n\n### 🎯 Topic Overview\n3-4 bullets covering what this is about and why it matters.\n\n### 🔑 Key Points\nBullet for each main idea. Max 1 sentence per bullet. Bold the key term at the start.\n\n### ⚠️ Common Mistakes\n2-3 bullets only. Format: ❌ Wrong belief → ✅ Correct understanding.\n\n### 📝 Quick Revision Checklist\n5-7 one-line bullets the student can use as a checklist before an exam."\n'
                 '}\n\n'
                 "CRITICAL RULES:\n"
                 "- LANGUAGE REQUIREMENT: All summary text, key concepts, definitions, and study notes MUST be written strictly in the ENGLISH language ONLY.\n"
-                "- Extract 5-8 key concepts minimum — cover all the important terms a student needs to know.\n"
-                "- Every explanation must be in plain, accessible English. Assume an intelligent student who is new to this topic.\n"
-                "- Use analogies, examples, and comparisons wherever they help understanding.\n"
+                "- NEVER write long paragraphs. Every section must use bullet points or very short sentences.\n"
+                "- The summary must NOT be an essay. It must include the bullet list of main points.\n"
+                "- Extract 4-7 key concepts — only the most important terms, not every word in the document.\n"
                 "- NEVER invent facts not present in the source material.\n"
-                "- Make the notes genuinely useful — something a student would actually study from, not just read once.\n\n"
+                "- Total length of 'notes' should NOT exceed 400 words. Be concise.\n\n"
                 f"DOCUMENT STUDY MATERIAL (all pages):\n{self._context(sources)}"
             )
             raw = self.gemini.generate(prompt)
@@ -275,20 +288,32 @@ class GroundedStudyService:
         
         try:
             prompt = (
-                "You are LearnSphere's expert quiz designer. Using ONLY the provided study material, generate exactly 5 "
-                "diagnostic multiple-choice questions that will genuinely test student understanding — not just memorisation.\n\n"
+                "⚠️ MANDATORY LANGUAGE RULE (NON-NEGOTIABLE): "
+                "ALL quiz questions, all answer choices, and all explanations MUST be written in ENGLISH ONLY. "
+                "The source material may be in Hindi or another language — translate all content to English. "
+                "DO NOT output any Hindi, Devanagari, or non-English text. Every word must be in English.\n\n"
+                "You are LearnSphere's expert quiz designer. Your ONLY source of truth is the provided study material below. "
+                "Generate exactly 5 diagnostic multiple-choice questions.\n\n"
+                "🛑 CRITICAL GROUNDING RULE (highest priority after language): "
+                "EVERY question MUST be directly based on a specific fact, term, number, process, name, definition, "
+                "or claim that is EXPLICITLY STATED in the provided study material. "
+                "DO NOT generate generic, abstract, or common-knowledge questions that are not grounded in this specific text. "
+                "If you cannot find a fact in the material, do NOT ask about it.\n\n"
                 "QUESTION DESIGN RULES:\n"
                 "0. LANGUAGE: ALL questions, options, and teaching explanations MUST be written strictly in the ENGLISH language ONLY.\n"
-                "1. VARIETY: Include a mix of question types across the 5 questions:\n"
-                "   - 1-2 questions testing conceptual understanding ('Why does X happen?', 'What is the relationship between X and Y?')\n"
-                "   - 1-2 questions testing application ('In scenario X, what would happen?', 'Which of these is an example of X?')\n"
-                "   - 1 question targeting a common misconception (where a wrong answer sounds very plausible to an uninformed student)\n"
-                "2. WRONG ANSWERS: Each wrong choice should represent a specific, believable mistake — not obviously silly options.\n"
-                "3. EXPLANATIONS: For each question, write a detailed teaching explanation (3-5 sentences) that:\n"
-                "   - Confirms WHY the correct answer is right (the mechanism/reason)\n"
-                "   - Explains WHY the most tempting wrong answer is wrong\n"
-                "   - Leaves the student with a clearer, deeper understanding than before\n"
-                "4. DIFFICULTY: Questions should range from moderate to challenging. Avoid trivial recall questions.\n\n"
+                "1. GROUNDING: Each question must test something explicitly mentioned in the study material. "
+                "Start drafting each question by identifying the specific sentence or chunk of text it is based on.\n"
+                "2. VARIETY: Include a mix of question types across the 5 questions:\n"
+                "   - 1-2 questions testing factual understanding (Who, What, When, Where from the material)\n"
+                "   - 1-2 questions testing conceptual understanding (Why does X happen? How does X work?)\n"
+                "   - 1 question targeting a common misconception about a specific topic mentioned in the text\n"
+                "3. WRONG ANSWERS: Each wrong choice should represent a believable mistake — not obviously silly options. "
+                "Wrong choices can mix real terms from the document with subtle errors.\n"
+                "4. EXPLANATIONS: For each question, write a teaching explanation that:\n"
+                "   - States the specific part of the study material that proves the correct answer\n"
+                "   - Explains why the most tempting wrong answer is incorrect\n"
+                "   - Reinforces the key fact or concept from the document\n"
+                "5. DIFFICULTY: Mix easy (direct recall), moderate (inference), and challenging (application) questions.\n\n"
                 "Return a STRICT JSON array with this EXACT structure (5 objects):\n"
                 '[\n'
                 '  {\n'
@@ -371,27 +396,37 @@ class GroundedStudyService:
             raise ValueError("No indexed content found for this document.")
 
         prompt = (
-            "You are an expert educational diagram designer. Analyze the study material below "
-            "and produce TWO outputs in a single JSON object.\n\n"
+            "⚠️ MANDATORY LANGUAGE RULE: ALL output — title, Mermaid labels, node summaries — MUST be in ENGLISH ONLY. "
+            "The source may be in Hindi or another language — translate everything to English. "
+            "DO NOT use any Hindi, Devanagari script, or non-English text.\n\n"
+            "You are an expert educational diagram designer. Read the study material below CAREFULLY and "
+            "produce a concept map that ACCURATELY reflects the actual content of this specific document.\n\n"
+            "🛑 CRITICAL GROUNDING RULES (read before generating):\n"
+            "- Every node label MUST be a real, named concept, term, person, process, or event that APPEARS IN THE SOURCE TEXT.\n"
+            "- DO NOT use generic placeholders like 'Main Topic', 'Key Concept', 'Concept 1', 'Effect', or 'Process'.\n"
+            "- Every relationship arrow MUST reflect an actual relationship described in the source material.\n"
+            "- Edge labels (the |label| part) must describe the real relationship — e.g. |causes|, |is part of|, |leads to|, |defined as|.\n"
+            "- If you cannot find 8 real named concepts in the material, use fewer — but never invent fake ones.\n\n"
             "Return STRICT JSON with this exact structure:\n"
             "{\n"
-            '  "title": "Short descriptive title for this concept map (5-8 words)",\n'
-            '  "mermaid_code": "A valid Mermaid flowchart. Use graph TD syntax. '
-            "Include 6-10 nodes. Each node label should be short (3-6 words). "
-            "Use --> for relationships. Add meaningful edge labels with |label|. "
-            'Quote node labels that contain spaces or special chars. Example:\\ngraph TD\\n  A[\\"Core Concept\\"] -->|leads to| B[\\"Effect\\"]",\n'
+            '  "title": "Specific, descriptive title that names the actual topic of this document (not generic)",\n'
+            '  "mermaid_code": "A valid Mermaid flowchart using graph TD syntax. '
+            "8-12 nodes. Each node label must be an actual named concept from the document (3-6 words). "
+            "Use --> for relationships with |meaningful edge label|. "
+            "Quote all node labels that contain spaces. "
+            'Example:\\ngraph TD\\n  A[\\"Photosynthesis\\"] -->|produces| B[\\"Glucose\\"]\\n  A -->|requires| C[\\"Sunlight\\"]",\n'
             '  "concept_nodes": [\n'
-            '    {"id": "node-1", "label": "Concept Name", "summary": "2-sentence plain-English summary of this concept.", "type": "core|process|outcome|definition"}\n'
+            '    {"id": "A", "label": "Exact concept name from the document", "summary": "1-2 sentences: what this concept is, directly based on the source text.", "type": "core|process|outcome|definition"}\n'
             "  ]\n"
             "}\n\n"
             "RULES:\n"
-            "- LANGUAGE: ALL titles, Mermaid labels, and node summaries MUST be generated strictly in the ENGLISH language ONLY.\n"
-            "- The Mermaid code must be syntactically valid. Use graph TD.\n"
-            "- concept_nodes must include ALL nodes referenced in the diagram.\n"
-            "- type field must be exactly one of: core, process, outcome, definition\n"
-            "- Extract only concepts genuinely present in the source material.\n"
-            "- No markdown fences in mermaid_code — just the raw graph definition.\n\n"
-            f"STUDY MATERIAL:\n{self._context(sources)}"
+            "- LANGUAGE: ALL titles, Mermaid labels, and node summaries MUST be in English ONLY.\n"
+            "- The Mermaid code must be syntactically valid. Use graph TD. Quote node labels with spaces.\n"
+            "- concept_nodes must include every node referenced in the mermaid_code with matching IDs.\n"
+            "- type must be exactly one of: core, process, outcome, definition\n"
+            "- NO generic, invented, or placeholder nodes. Only use concepts directly from the source text.\n"
+            "- No markdown fences in mermaid_code — just the raw graph definition starting with 'graph TD'.\n\n"
+            f"SOURCE MATERIAL (read this carefully before generating any nodes):\n{self._context(sources)}"
         )
 
         try:
@@ -476,6 +511,9 @@ class GroundedStudyService:
             raise ValueError("No indexed content found for this document.")
 
         prompt = (
+            "⚠️ MANDATORY LANGUAGE RULE: Your ENTIRE response MUST be in ENGLISH ONLY. "
+            "The source material may be in Hindi or another language — you MUST translate and explain in English. "
+            "DO NOT use any Hindi, Devanagari script, or non-English text.\n\n"
             f"PERSONA: {persona}\n\n"
             f"TASK: Explain the topic '{topic}' using ONLY the information from the study material below. WRITE STRICTLY IN THE ENGLISH LANGUAGE ONLY.\n\n"
             "FORMAT YOUR RESPONSE IN MARKDOWN. Use headers, bold, bullet points, and code blocks where appropriate for your style.\n"
@@ -512,6 +550,10 @@ class GroundedStudyService:
 
         try:
             prompt = (
+                "⚠️ MANDATORY LANGUAGE RULE (NON-NEGOTIABLE): "
+                "ALL questions, answer choices, and explanations MUST be written in ENGLISH ONLY. "
+                "The source material may be in Hindi or another language — you MUST translate everything to English. "
+                "DO NOT output any Hindi, Devanagari script, or non-English text.\n\n"
                 "You are LearnSphere's adaptive quiz engine. Generate exactly 5 diagnostic MCQ questions.\n\n"
                 f"{weak_focus}"
                 "RULES:\n"
