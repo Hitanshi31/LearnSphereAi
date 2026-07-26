@@ -42,5 +42,48 @@
     ],
     "attempt_history": [],
     "updated_at": "2026-07-21T17:39:41.807041+00:00"
+  },
+  "test_user": {
+    "topics": {
+      "Chemistry Acids & Bases": {
+        "attempts": 1,
+        "correct": 0,
+        "confidence_total": 4,
+        "misconception_count": 1
+      }
+    },
+    "recent_misconceptions": [
+      {
+        "id": "m-0f028467",
+        "topic": "Chemistry Acids & Bases",
+        "label": "Incomplete Causal Model in Chemistry Acids & Bases",
+        "why": "Your answer 'pH increases above 7' relies on surface observation rather than the underlying mechanism.",
+        "common_intuition": "Assuming surface correlation directly explains Chemistry Acids & Bases.",
+        "scientific_reality": "The core relationship is defined by: pH decreases below 7.",
+        "correction": "Key Concept: pH decreases below 7.",
+        "verification_check": "Which principle best supports the correct explanation (pH decreases below 7)?",
+        "verification_options": [
+          "The core structural relationship identified in the source text",
+          "Surface observational correlation",
+          "Arbitrary environmental variation",
+          "Static non-dynamic equilibrium"
+        ],
+        "verification_correct_index": 0,
+        "created_at": "2026-07-25 11:27"
+      }
+    ],
+    "attempt_history": [
+      {
+        "id": "e5638017",
+        "topic": "Chemistry Acids & Bases",
+        "question": "What happens to pH when an acid is added?",
+        "student_answer": "pH increases above 7",
+        "correct_answer": "pH decreases below 7",
+        "confidence": 4,
+        "is_correct": false,
+        "timestamp": "11:27:13"
+      }
+    ],
+    "updated_at": "2026-07-25T11:27:13.867017+00:00"
   }
 }

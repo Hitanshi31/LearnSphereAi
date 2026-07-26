@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,16 +11,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <head>
-        {/* Mermaid.js for concept map rendering */}
-        <script
-          type="module"
-          dangerouslySetInnerHTML={{
-            __html: `
-              import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-              mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
-              window.mermaid = mermaid;
-            `,
-          }}
+        <Script
+          src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"
+          strategy="beforeInteractive"
         />
       </head>
       <body>{children}</body>

@@ -59,6 +59,8 @@ export type MisconceptionInsight = {
   verification_options: string[];
   verification_correct_index: number;
   created_at: string;
+  repaired?: boolean;
+  repaired_at?: string;
 };
 
 export type AttemptRecord = {
@@ -102,36 +104,95 @@ export type SubmitAttemptInput = {
   isCorrect: boolean;
 };
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_URL_CANDIDATES = [
+  process.env.NEXT_PUBLIC_API_URL,
+  "http://127.0.0.1:8001",
+  "http://localhost:8001",
+  "http://127.0.0.1:8000",
+  "http://localhost:8000",
+].filter(Boolean) as string[];
+
+let activeApiUrl = API_URL_CANDIDATES[0];
+
+async function resolveApiUrl(): Promise<string> {
+  for (const baseUrl of API_URL_CANDIDATES) {
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/documents`, { method: "GET" });
+      if (res.ok) {
+        activeApiUrl = baseUrl;
+        return baseUrl;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return activeApiUrl;
+}
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiUrl}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
+  let baseUrl = activeApiUrl;
+  try {
+    const response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+    });
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail ?? "LearnSphere request could not be completed.");
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail ?? "LearnSphere request could not be completed.");
+    }
+    return response.json() as Promise<T>;
+  } catch (error) {
+    // Retry with resolved active port if connection failed
+    const resolvedUrl = await resolveApiUrl();
+    if (resolvedUrl !== baseUrl) {
+      const response = await fetch(`${resolvedUrl}${path}`, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          ...(init?.headers || {}),
+        },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail ?? "LearnSphere request could not be completed.");
+      }
+      return response.json() as Promise<T>;
+    }
+    throw error;
   }
-  return response.json() as Promise<T>;
 }
 
 export async function uploadDocument(file: File): Promise<UploadedDocument> {
   const form = new FormData();
   form.append("file", file);
-  const response = await fetch(`${apiUrl}/api/v1/documents`, {
-    method: "POST",
-    body: form,
-  });
-  const body = await response.json();
-  if (!response.ok) {
-    throw new Error(body.detail ?? "Upload failed. Please ensure the file is a valid PDF.");
+  let baseUrl = activeApiUrl;
+
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/documents`, {
+      method: "POST",
+      body: form,
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.detail ?? "Upload failed. Please ensure the file is a valid PDF.");
+    }
+    return body as UploadedDocument;
+  } catch (error) {
+    const resolvedUrl = await resolveApiUrl();
+    const response = await fetch(`${resolvedUrl}/api/v1/documents`, {
+      method: "POST",
+      body: form,
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.detail ?? "Upload failed. Please ensure the file is a valid PDF.");
+    }
+    return body as UploadedDocument;
   }
-  return body as UploadedDocument;
 }
 
 export async function listDocuments(): Promise<UploadedDocument[]> {
@@ -182,6 +243,19 @@ export async function submitAttempt(input: SubmitAttemptInput): Promise<{
       correct_answer: input.correctAnswer,
       confidence: input.confidence,
       is_correct: input.isCorrect,
+    }),
+  });
+}
+
+export async function repairMisconception(
+  misconceptionId: string,
+  learnerId = "alex"
+): Promise<LearningProfile> {
+  return apiJson<LearningProfile>("/api/v1/learning/repair-misconception", {
+    method: "POST",
+    body: JSON.stringify({
+      learner_id: learnerId,
+      misconception_id: misconceptionId,
     }),
   });
 }
@@ -264,3 +338,24 @@ export async function generateAdaptiveQuiz(
     body: JSON.stringify({ learner_id: learnerId }),
   });
 }
+
+// ─── Audio & Speech Narration ──────────────────────────────────────────────────
+
+export type AudioSection = {
+  title: string;
+  text: string;
+  estimated_duration_sec: number;
+};
+
+export type AudioNarration = {
+  document_id: string;
+  title: string;
+  total_sections: number;
+  estimated_total_minutes: number;
+  sections: AudioSection[];
+};
+
+export async function getAudioNarration(documentId: string): Promise<AudioNarration> {
+  return apiJson<AudioNarration>(`/api/v1/documents/${documentId}/audio-narration`);
+}
+

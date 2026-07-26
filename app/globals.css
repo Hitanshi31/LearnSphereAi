@@ -192,3 +192,58 @@ h1 span { color: #ffc265; font-size: 24px; }
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
+
+/* Interactive Concept Node Cards */
+.concept-card-interactive {
+  background: #fff;
+  border: 1px solid #eaeaf2;
+  border-radius: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+.concept-card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(98, 85, 239, 0.12);
+  border-color: #c5bdfc;
+}
+.concept-card-interactive.active-node {
+  border-color: #6255ef;
+  background: #f8f7ff;
+  box-shadow: 0 0 0 2px #6255ef33;
+}
+
+/* Sample Material Pills */
+.sample-pill {
+  background: #f0efff;
+  border: 1px solid #dcd7fe;
+  color: #564ad9;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sample-pill:hover {
+  background: #6255ef;
+  color: #fff;
+  border-color: #6255ef;
+}
+
+/* Repaired Misconception Badge */
+.badge-repaired {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

@@ -96,6 +96,13 @@ class MisconceptionInsight(BaseModel):
     verification_options: list[str] = Field(default_factory=list)
     verification_correct_index: int = 0
     created_at: str = ""
+    repaired: bool = False
+    repaired_at: str | None = None
+
+
+class RepairMisconceptionRequest(BaseModel):
+    learner_id: str = Field(default="alex", min_length=1, max_length=80)
+    misconception_id: str = Field(min_length=1, max_length=120)
 
 
 class AttemptRecord(BaseModel):
@@ -184,4 +191,25 @@ class ExplainResponse(BaseModel):
 
 class AdaptiveQuizRequest(BaseModel):
     learner_id: str = Field(default="alex", min_length=1, max_length=80)
+
+
+# ── Text-to-Speech (HuggingFace TTS) ──────────────────────────────────────────
+
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class AudioSection(BaseModel):
+    title: str
+    text: str
+    estimated_duration_sec: int
+
+
+class AudioNarrationResponse(BaseModel):
+    document_id: str
+    title: str
+    total_sections: int
+    estimated_total_minutes: float
+    sections: list[AudioSection] = Field(default_factory=list)
+
 

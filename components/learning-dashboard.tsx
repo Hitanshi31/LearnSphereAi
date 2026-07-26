@@ -13,7 +13,10 @@ import {
   getLearningProfile,
   ingestYoutube,
   listDocuments,
+  repairMisconception,
   submitAttempt,
+  getAudioNarration,
+  type AudioNarration,
   type Citation,
   type ConceptNode,
   type ExplainStyle,
@@ -76,6 +79,115 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function FormattedSummary({ summary, onSpeak, isSpeaking }: { summary: string; onSpeak?: () => void; isSpeaking?: boolean }) {
+  if (!summary) return null;
+
+  const lines = summary.split("\n").map((l) => l.trim()).filter(Boolean);
+  const overviewText = lines.filter((l) => !l.startsWith("•") && !l.startsWith("-")).join(" ");
+  const bulletItems = lines
+    .filter((l) => l.startsWith("•") || l.startsWith("-"))
+    .map((l) => l.replace(/^[-•]\s*/, ""));
+
+  return (
+    <div style={{ background: "#f0efff", border: "1px solid #dcd7fe", borderRadius: "10px", padding: "18px 20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+        <b style={{ color: "#564ad9", fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase" }}>
+          EXECUTIVE SUMMARY (Hugging Face AI)
+        </b>
+        {onSpeak && (
+          <button
+            onClick={onSpeak}
+            style={{
+              background: isSpeaking ? "#fee2e2" : "#ffffff",
+              color: isSpeaking ? "#991b1b" : "#564ad9",
+              border: "1px solid #dcd7fe",
+              borderRadius: "20px",
+              padding: "4px 10px",
+              fontSize: "11px",
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px"
+            }}
+          >
+            {isSpeaking ? "⏹️ Stop Audio" : "🔊 Listen"}
+          </button>
+        )}
+      </div>
+      <p style={{ margin: 0, fontSize: "14px", lineHeight: "1.6", color: "#202236", fontWeight: "500" }}>
+        {overviewText}
+      </p>
+
+      {bulletItems.length > 0 && (
+        <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <b style={{ color: "#564ad9", fontSize: "10px", letterSpacing: "0.6px", textTransform: "uppercase" }}>KEY TAKEAWAYS</b>
+          {bulletItems.map((item, idx) => (
+            <div key={idx} style={{ display: "flex", gap: "8px", alignItems: "flex-start", fontSize: "13px", color: "#34374c", lineHeight: "1.5" }}>
+              <span style={{ color: "#6255ef", fontWeight: "bold" }}>✓</span>
+              <span>{item}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FormattedNotes({ content }: { content: string }) {
+  if (!content) return null;
+
+  const sections = content.split(/(?=###\s+)/);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "16px" }}>
+      {sections.map((section, idx) => {
+        const trimmed = section.trim();
+        if (!trimmed) return null;
+
+        const headerMatch = trimmed.match(/^###\s+(.+)$/m);
+        const rawHeader = headerMatch ? headerMatch[1].trim() : null;
+        const icon = rawHeader ? (rawHeader.match(/^[^\w\s]+/)?.[0] || '📌') : '📌';
+        const headerTitle = rawHeader ? rawHeader.replace(/^[^\w\s]+\s*/, '') : null;
+
+        const bodyText = rawHeader ? trimmed.replace(/^###\s+.+$/m, '').trim() : trimmed;
+        const lines = bodyText.split('\n').map(l => l.trim()).filter(Boolean);
+
+        return (
+          <div key={idx} style={{ background: "#f8f8fd", border: "1px solid #e5e5f0", borderRadius: "10px", padding: "16px 18px" }}>
+            {headerTitle && (
+              <h4 style={{ margin: "0 0 10px", fontSize: "14px", fontWeight: "700", color: "#564ad9", display: "flex", alignItems: "center", gap: "8px" }}>
+                <span>{icon}</span> {headerTitle}
+              </h4>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {lines.map((line, lIdx) => {
+                const isBullet = line.startsWith("- ") || line.startsWith("• ") || line.startsWith("* ");
+                const cleanLine = isBullet ? line.replace(/^[-•*]\s+/, '') : line;
+                const parts = cleanLine.split(/(\*\*.*?\*\*)/g);
+
+                return (
+                  <div key={lIdx} style={{ display: "flex", gap: isBullet ? "8px" : "0", alignItems: "flex-start", fontSize: "13px", color: "#34374c", lineHeight: "1.5" }}>
+                    {isBullet && <span style={{ color: "#6255ef", fontWeight: "bold" }}>•</span>}
+                    <div>
+                      {parts.map((p, pIdx) => {
+                        if (p.startsWith("**") && p.endsWith("**")) {
+                          return <strong key={pIdx} style={{ color: "#202236" }}>{p.slice(2, -2)}</strong>;
+                        }
+                        return p;
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function EmptyDocumentState({
   title = "No Active Material Selected",
   description = "Upload a PDF document or paste a YouTube URL in 'My materials' to unlock AI study tools, diagnostic quizzes, visual concept maps, and grounded Q&A.",
@@ -108,6 +220,8 @@ function ConceptMapCard({
   busy,
   onGenerate,
   buttonText = "Generate Concept Map",
+  onSelectTopic,
+  onAskQuestion,
 }: {
   title?: string;
   mermaidCode?: string;
@@ -115,11 +229,56 @@ function ConceptMapCard({
   busy: boolean;
   onGenerate: () => void;
   buttonText?: string;
+  onSelectTopic?: (topic: string) => void;
+  onAskQuestion?: (question: string) => void;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [renderError, setRenderError] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<ConceptNode | null>(null);
+
+  useEffect(() => {
+    if (!mermaidCode || !containerRef.current) return;
+
+    setRenderError(false);
+    const container = containerRef.current;
+    const renderId = `mermaid-${Math.random().toString(36).substring(2, 9)}`;
+
+    let attempts = 0;
+    const attemptRender = async () => {
+      // @ts-ignore
+      const mermaid = typeof window !== "undefined" ? (window as any).mermaid : null;
+      if (!mermaid) {
+        attempts++;
+        if (attempts < 15) {
+          setTimeout(attemptRender, 200);
+        }
+        return;
+      }
+
+      try {
+        mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose" });
+        let cleanCode = mermaidCode.trim();
+        if (!cleanCode.startsWith("graph TD") && !cleanCode.startsWith("graph LR") && !cleanCode.startsWith("flowchart")) {
+          cleanCode = `graph TD\n${cleanCode}`;
+        }
+
+        const { svg } = await mermaid.render(renderId, cleanCode);
+        if (container) {
+          container.innerHTML = svg;
+        }
+      } catch (err) {
+        console.warn("Mermaid render error:", err);
+        setRenderError(true);
+      }
+    };
+
+    attemptRender();
+  }, [mermaidCode]);
+
   return (
     <Card className="ask" style={{ marginTop: "18px" }}>
       <h3>🗺️ Visual Concept Map</h3>
-      <p>Generate an AI-powered Mermaid diagram showing how key concepts in your material relate to each other.</p>
+      <p>Interactive AI-powered diagram mapping key concepts and active relationship verbs from your material. Click any concept node to explore actions.</p>
       <button className="primary" disabled={busy} onClick={onGenerate}>
         {busy ? "Generating map..." : mermaidCode ? "Regenerate Concept Map" : buttonText}
       </button>
@@ -129,53 +288,75 @@ function ConceptMapCard({
           <b style={{ color: "#564ad9", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px" }}>
             {title || "Concept Map"}
           </b>
-          <div
-            className="mermaid"
-            style={{
-              marginTop: "12px",
-              padding: "20px",
-              background: "#f7f6ff",
-              borderRadius: "12px",
-              border: "1px solid #dcd7fe",
-              overflowX: "auto",
-              fontSize: "13px",
-            }}
-            ref={(el) => {
-              if (el && mermaidCode) {
-                el.textContent = mermaidCode;
-                // @ts-ignore
-                if (typeof window !== "undefined" && (window as any).mermaid) {
-                  el.removeAttribute("data-processed");
-                  // @ts-ignore
-                  (window as any).mermaid.run({ nodes: [el] });
-                }
-              }
-            }}
-          >
-            {mermaidCode}
-          </div>
+
+          {!renderError ? (
+            <div
+              ref={containerRef}
+              style={{
+                marginTop: "12px",
+                padding: "20px",
+                background: "#f7f6ff",
+                borderRadius: "12px",
+                border: "1px solid #dcd7fe",
+                overflowX: "auto",
+                textAlign: "center",
+              }}
+            />
+          ) : (
+            <div style={{ marginTop: "12px", padding: "16px", background: "#fff5f5", border: "1px solid #fecaca", borderRadius: "10px", fontSize: "13px", color: "#991b1b" }}>
+              Graph rendering in progress. Concept nodes and relationships are listed below:
+            </div>
+          )}
 
           {conceptNodes && conceptNodes.length > 0 && (
             <>
               <b style={{ marginTop: "18px", display: "block", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.6px", color: "#564ad9" }}>
-                CONCEPT NODES
+                INTERACTIVE CONCEPT NODES — CLICK TO DRILL DOWN
               </b>
               <div className="concepts-grid" style={{ marginTop: "10px" }}>
-                {conceptNodes.map((node) => (
-                  <div
-                    key={node.id}
-                    className="concept-card"
-                    style={{
-                      borderLeft: `3px solid ${
-                        node.type === "core" ? "#6255ef" : node.type === "process" ? "#f59e0b" : node.type === "outcome" ? "#22c55e" : "#94a3b8"
-                      }`,
-                    }}
-                  >
-                    <h4 style={{ margin: "0 0 4px", fontSize: "13px" }}>{node.label}</h4>
-                    <p style={{ margin: 0, fontSize: "12px" }}>{node.summary}</p>
-                    <span style={{ fontSize: "10px", color: "#9294a6", textTransform: "uppercase" }}>{node.type}</span>
-                  </div>
-                ))}
+                {conceptNodes.map((node, idx) => {
+                  const isSelected = selectedNode?.label === node.label;
+                  return (
+                    <div
+                      key={node.id || idx}
+                      className={`concept-card-interactive ${isSelected ? "active-node" : ""}`}
+                      style={{
+                        borderLeft: `4px solid ${
+                          node.type === "core" ? "#6255ef" : node.type === "process" ? "#f59e0b" : node.type === "outcome" ? "#22c55e" : "#8b5cf6"
+                        }`,
+                      }}
+                      onClick={() => setSelectedNode(isSelected ? null : node)}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <h4 style={{ margin: 0, fontSize: "13px", color: "#202236" }}>{node.label}</h4>
+                        <span style={{ fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "10px", background: "#f0efff", color: "#564ad9", textTransform: "uppercase" }}>
+                          {node.type}
+                        </span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: "12px", color: "#52566b", lineHeight: "1.45" }}>{node.summary}</p>
+                      {isSelected && (
+                        <div style={{ marginTop: "10px", paddingTop: "8px", borderTop: "1px solid #e5e5f0", display: "flex", gap: "6px", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
+                          {onSelectTopic && (
+                            <button
+                              className="sample-pill"
+                              onClick={() => onSelectTopic(node.label)}
+                            >
+                              🎨 Explain in My Style
+                            </button>
+                          )}
+                          {onAskQuestion && (
+                            <button
+                              className="sample-pill"
+                              onClick={() => onAskQuestion(`Explain how ${node.label} works according to the text.`)}
+                            >
+                              ❓ Ask Q&A
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}
@@ -225,6 +406,93 @@ export function LearningDashboard() {
   const [explainStyle, setExplainStyle] = useState<ExplainStyle>("beginner");
   const [styleExplanation, setStyleExplanation] = useState<StyleExplanation>();
   const [explainBusy, setExplainBusy] = useState(false);
+
+  // Audio & Speech state
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speechRate, setSpeechRate] = useState(1.0);
+  const [speakingText, setSpeakingText] = useState<string | null>(null);
+  const [audioNarration, setAudioNarration] = useState<AudioNarration | null>(null);
+  const [audioBusy, setAudioBusy] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+
+  const speakText = (text: string) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      alert("Text-to-Speech is not supported in this browser environment.");
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const clean = text.replace(/[*#📌⚡•\-_]/g, " ").trim();
+    if (!clean) return;
+    const utterance = new SpeechSynthesisUtterance(clean);
+    utterance.rate = speechRate;
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      setSpeakingText(null);
+    };
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      setSpeakingText(null);
+    };
+    setIsSpeaking(true);
+    setSpeakingText(text);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const stopSpeech = () => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsSpeaking(false);
+    setSpeakingText(null);
+  };
+
+  const toggleSpeech = (text: string) => {
+    if (isSpeaking && speakingText === text) {
+      stopSpeech();
+    } else {
+      speakText(text);
+    }
+  };
+
+  const loadAudioNarration = async (docId: string) => {
+    setAudioBusy(true);
+    try {
+      const data = await getAudioNarration(docId);
+      setAudioNarration(data);
+    } catch (err) {
+      console.warn("Audio narration load notice:", err);
+    } finally {
+      setAudioBusy(false);
+    }
+  };
+
+  const startVoiceInput = () => {
+    if (typeof window === "undefined") return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Voice input is not supported in this browser. Please type your question.");
+      return;
+    }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+      recognition.onstart = () => setIsListening(true);
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          setQuestion(transcript);
+        }
+        setIsListening(false);
+      };
+      recognition.onerror = () => setIsListening(false);
+      recognition.onend = () => setIsListening(false);
+      recognition.start();
+    } catch (err) {
+      console.warn("Voice input notice:", err);
+      setIsListening(false);
+    }
+  };
 
   const refreshProfile = async () => {
     try {
@@ -459,19 +727,22 @@ export function LearningDashboard() {
     }
   };
 
-  const handleVerificationCheck = () => {
+  const handleVerificationCheck = async () => {
     if (!activeRepairModal || verificationChoice === undefined) return;
     if (verificationChoice === activeRepairModal.verification_correct_index) {
-      setVerificationResult("Correct! Mental model repaired. Profile updated.");
-      refreshProfile();
+      setVerificationResult("✓ Correct! Mental model repaired and recorded in your Learning Profile.");
+      try {
+        const updated = await repairMisconception(activeRepairModal.id, learnerId);
+        setProfile(updated);
+      } catch {
+        refreshProfile();
+      }
     } else {
       setVerificationResult("Not quite — review the Scientific Reality section above and try again.");
     }
   };
 
   const activeInsight = insight ?? profile?.recent_misconceptions[0];
-
-  // Consolidated 5 Navigation Tabs (PDF and YouTube unified into My Materials)
   const navItems = ["Overview", "My materials", "Study notes", "Practice", "Learning profile"];
 
   const loadVisual = async () => {
@@ -781,6 +1052,23 @@ export function LearningDashboard() {
                 </div>
               </div>
 
+              {documentList.length > 0 && (
+                <div style={{ margin: "10px 0 14px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "11px", fontWeight: 700, color: "#564ad9", textTransform: "uppercase", letterSpacing: "0.6px" }}>
+                    ⚡ QUICK DEMO MATERIALS:
+                  </span>
+                  {documentList.slice(0, 4).map((doc) => (
+                    <button
+                      key={doc.id}
+                      className="sample-pill"
+                      onClick={() => activateDocument(doc)}
+                    >
+                      {doc.id.startsWith("yt-") ? "📺" : "⚛️"} {doc.filename.replace(".pdf", "")}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {ingestMode === "pdf" ? (
                 <div
                   style={{
@@ -899,15 +1187,79 @@ export function LearningDashboard() {
                   </div>
 
                   {notes && (
-                    <div className="study-answer" style={{ marginTop: "20px" }}>
-                      <b>EXECUTIVE SUMMARY</b>
-                      <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#202236", fontWeight: "500" }}>
-                        {notes.summary || "Summary generated from indexed source material."}
-                      </p>
+                    <div style={{ marginTop: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                      {/* Audio Study Narration Bar */}
+                      <div
+                        style={{
+                          background: "linear-gradient(135deg, #564ad9, #7c3aed)",
+                          color: "#ffffff",
+                          borderRadius: "12px",
+                          padding: "16px 20px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          flexWrap: "wrap",
+                          gap: "12px",
+                          boxShadow: "0 4px 14px rgba(86, 74, 217, 0.25)"
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: "10px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "1px", opacity: 0.85 }}>
+                            🎧 AUDIO STUDY NARRATION (TEXT-TO-SPEECH)
+                          </div>
+                          <div style={{ fontSize: "15px", fontWeight: 700, marginTop: "2px" }}>
+                            {audioNarration ? audioNarration.title : `Listen to ${documentName} Study Narration`}
+                          </div>
+                          <div style={{ fontSize: "12px", opacity: 0.9, marginTop: "2px" }}>
+                            {audioNarration ? `${audioNarration.total_sections} sections · ~${audioNarration.estimated_total_minutes} min duration` : "Full voice study narration for hands-free learning."}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                          <select
+                            value={speechRate}
+                            onChange={(e) => setSpeechRate(parseFloat(e.target.value))}
+                            style={{ background: "rgba(255,255,255,0.2)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", borderRadius: "6px", padding: "6px 10px", fontSize: "12px", outline: "none", cursor: "pointer" }}
+                          >
+                            <option value="0.8" style={{ color: "#000" }}>0.8x Speed</option>
+                            <option value="1.0" style={{ color: "#000" }}>1.0x Speed</option>
+                            <option value="1.25" style={{ color: "#000" }}>1.25x Speed</option>
+                            <option value="1.5" style={{ color: "#000" }}>1.5x Speed</option>
+                          </select>
+                          <button
+                            onClick={() => {
+                              if (!audioNarration && documentId) {
+                                loadAudioNarration(documentId);
+                              }
+                              toggleSpeech(`${notes.summary}. ${notes.notes}`);
+                            }}
+                            style={{
+                              background: isSpeaking ? "#ef4444" : "#ffffff",
+                              color: isSpeaking ? "#ffffff" : "#564ad9",
+                              border: "none",
+                              borderRadius: "20px",
+                              padding: "8px 18px",
+                              fontSize: "13px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              boxShadow: "0 2px 8px rgba(0,0,0,0.15)"
+                            }}
+                          >
+                            {isSpeaking ? "⏹️ Stop Audio" : "▶️ Play Audio Guide"}
+                          </button>
+                        </div>
+                      </div>
+
+                      <FormattedSummary
+                        summary={notes.summary}
+                        onSpeak={() => toggleSpeech(notes.summary)}
+                        isSpeaking={isSpeaking && speakingText === notes.summary}
+                      />
 
                       {notes.key_concepts && notes.key_concepts.length > 0 && (
-                        <>
-                          <b style={{ marginTop: "18px" }}>KEY CONCEPTS & DEFINITIONS</b>
+                        <div>
+                          <b style={{ color: "#564ad9", fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase", display: "block", marginBottom: "10px" }}>
+                            KEY CONCEPTS & DEFINITIONS
+                          </b>
                           <div className="concepts-grid">
                             {notes.key_concepts.map((kc, idx) => (
                               <div key={idx} className="concept-card">
@@ -916,23 +1268,22 @@ export function LearningDashboard() {
                               </div>
                             ))}
                           </div>
-                        </>
+                        </div>
                       )}
 
-                      <b style={{ marginTop: "20px" }}>GROUNDED STUDY NOTES</b>
-                      <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.65", color: "#34374c", fontSize: "13.5px" }}>
-                        {notes.notes}
-                      </div>
+                      <FormattedNotes content={notes.notes} />
 
                       {notes.citations && notes.citations.length > 0 && (
-                        <>
-                          <b style={{ marginTop: "18px" }}>SOURCE CITATIONS & PROVENANCE</b>
+                        <div style={{ marginTop: "8px" }}>
+                          <b style={{ color: "#564ad9", fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase", display: "block", marginBottom: "8px" }}>
+                            SOURCE CITATIONS & PROVENANCE
+                          </b>
                           <div className="citations">
                             {notes.citations.map((c) => (
                               <span key={c.chunk_id}>Source · Page {c.page_number}</span>
                             ))}
                           </div>
-                        </>
+                        </div>
                       )}
                     </div>
                   )}
@@ -946,6 +1297,8 @@ export function LearningDashboard() {
                   busy={visualBusy}
                   onGenerate={loadVisual}
                   buttonText="Generate Concept Map"
+                  onSelectTopic={(topic) => setExplainTopic(topic)}
+                  onAskQuestion={(q) => setQuestion(q)}
                 />
 
                 {/* Explain in Different Styles Panel */}
@@ -1199,21 +1552,26 @@ export function LearningDashboard() {
                     <Card key={m.id} className="ask" style={{ marginTop: 0 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div style={{ flex: 1 }}>
-                          <p className="eyebrow" style={{ color: "#e53e3e" }}>{m.topic}</p>
-                          <h3 style={{ margin: "2px 0 6px", color: "#202236" }}>{m.label}</h3>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <p className="eyebrow" style={{ color: "#e53e3e", margin: 0 }}>{m.topic}</p>
+                            {m.repaired && <span className="badge-repaired">✓ REPAIRED</span>}
+                          </div>
+                          <h3 style={{ margin: "4px 0 6px", color: "#202236" }}>{m.label}</h3>
                           <p style={{ margin: 0, fontSize: "13px", color: "#666a7c", lineHeight: "1.5" }}>{m.why}</p>
-                          <p style={{ margin: "8px 0 0", fontSize: "11px", color: "#9396a6" }}>{m.created_at}</p>
+                          <p style={{ margin: "8px 0 0", fontSize: "11px", color: "#9396a6" }}>
+                            {m.created_at} {m.repaired_at ? `· Repaired ${m.repaired_at}` : ""}
+                          </p>
                         </div>
                         <button
-                          className="primary"
+                          className={m.repaired ? "quiet" : "primary"}
                           style={{ marginLeft: "16px", flexShrink: 0, padding: "8px 14px", fontSize: "12px" }}
                           onClick={() => {
                             setActiveRepairModal(m);
                             setVerificationChoice(undefined);
-                            setVerificationResult("");
+                            setVerificationResult(m.repaired ? "✓ Mental model repaired and recorded." : "");
                           }}
                         >
-                          Repair →
+                          {m.repaired ? "Review Repair →" : "Repair →"}
                         </button>
                       </div>
                     </Card>
@@ -1297,19 +1655,57 @@ export function LearningDashboard() {
             <h3>Ask about your material</h3>
             <p>{documentId ? `Grounded in "${documentName}". Source citations included.` : "Upload material to ask grounded questions."}</p>
           </div>
-          <form onSubmit={ask}>
+          <form onSubmit={ask} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             <input
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
               placeholder={documentId ? `Ask LearnSphere about "${documentName}"…` : "Upload material to start asking questions..."}
+              style={{ flex: 1 }}
             />
+            <button
+              type="button"
+              onClick={startVoiceInput}
+              style={{
+                background: isListening ? "#fee2e2" : "#f0efff",
+                color: isListening ? "#991b1b" : "#564ad9",
+                border: "1px solid #dcd7fe",
+                borderRadius: "8px",
+                padding: "10px 14px",
+                fontSize: "13px",
+                fontWeight: "600",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px"
+              }}
+              title="Speak your question using microphone"
+            >
+              {isListening ? "🎙️ Listening..." : "🎙️ Voice Input"}
+            </button>
             <button disabled={busy || !documentId} aria-label="Send question">
               ↑
             </button>
           </form>
           {answer && (
             <div className="study-answer">
-              <b>LEARNSPHERE COMPANION</b>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <b>LEARNSPHERE COMPANION</b>
+                <button
+                  onClick={() => toggleSpeech(answer.answer)}
+                  style={{
+                    background: isSpeaking && speakingText === answer.answer ? "#fee2e2" : "#ffffff",
+                    color: isSpeaking && speakingText === answer.answer ? "#991b1b" : "#564ad9",
+                    border: "1px solid #dcd7fe",
+                    borderRadius: "20px",
+                    padding: "3px 9px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer"
+                  }}
+                >
+                  {isSpeaking && speakingText === answer.answer ? "⏹️ Stop Audio" : "🔊 Listen"}
+                </button>
+              </div>
               <p>{answer.answer}</p>
               <div className="citations">
                 {answer.citations?.map((c) => (

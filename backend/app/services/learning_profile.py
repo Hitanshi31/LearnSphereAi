@@ -136,7 +136,7 @@ class LearningProfileStore:
                 "Australia would experience no seasonal changes",
                 "Australia's seasons would lag by 6 months"
             ],
-            "verification_correct_index": 0,
+            "verification_correct_index": 1,  # Index 1 = "Australia would be in winter" — the correct science
             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         })
 
@@ -165,6 +165,32 @@ class LearningProfileStore:
             learner.recent_misconceptions.insert(0, misconception)
             del learner.recent_misconceptions[8:]
 
+        learner.updated_at = datetime.now(timezone.utc)
+        self._save()
+        return learner
+
+    def ensure_topic(self, learner_id: str, topic_name: str) -> None:
+        """Dynamically sync a new study material topic to learner's profile."""
+        learner = self._learners[learner_id]
+        clean_topic = topic_name.replace(".pdf", "").replace("_", " ").title().strip()
+        if clean_topic and clean_topic not in learner.topics:
+            learner.topics[clean_topic] = TopicState(attempts=2, correct=1, confidence_total=8, misconception_count=0)
+            self._save()
+
+    def repair_misconception(self, learner_id: str, misconception_id: str) -> LearnerState:
+        """Mark a misconception as repaired in the learner's profile and boost topic mastery."""
+        learner = self._learners[learner_id]
+        for m in learner.recent_misconceptions:
+            if m.get("id") == misconception_id:
+                m["repaired"] = True
+                m["repaired_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+                topic = m.get("topic")
+                if topic and topic in learner.topics:
+                    # Give credit for repairing the mental model
+                    ts = learner.topics[topic]
+                    ts.correct += 1
+                    ts.attempts += 1
+                    ts.confidence_total += 5
         learner.updated_at = datetime.now(timezone.utc)
         self._save()
         return learner

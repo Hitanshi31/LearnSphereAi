@@ -24,12 +24,15 @@ from .schemas import (
     LearningProfile,
     MisconceptionInsight,
     QuizResponse,
+    RepairMisconceptionRequest,
     StudyNotesResponse,
     TopicMastery,
     VisualExplainerResponse,
     ConceptNode,
     YoutubeIngestRequest,
     YoutubeIngestResponse,
+    AudioNarrationResponse,
+    AudioSection,
 )
 from .services.document_processor import PdfProcessor
 from .services.grounded_learning import GeminiClient, GroundedStudyService, SourceChunk, VectorIndex
@@ -160,6 +163,13 @@ def record_attempt(attempt: AttemptRequest) -> AttemptResponse:
         profile=serialize_profile(attempt.learner_id),
         misconception=MisconceptionInsight(**insight) if insight else None,
     )
+
+
+@app.post("/api/v1/learning/repair-misconception", response_model=LearningProfile)
+def repair_misconception(request: RepairMisconceptionRequest) -> LearningProfile:
+    """Mark a misconception as repaired and update the learner's profile."""
+    profile_store.repair_misconception(request.learner_id, request.misconception_id)
+    return serialize_profile(request.learner_id)
 
 
 @app.post("/api/v1/study/chat", response_model=ChatResponse)
@@ -405,3 +415,66 @@ def adaptive_quiz(document_id: str, request: AdaptiveQuizRequest) -> QuizRespons
         return QuizResponse(document_id=document_id, questions=questions)
     except (ValueError, RuntimeError) as error:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+
+
+# ------------------------------------------------------------------ #
+# Audio Narration & Speech Generation
+# ------------------------------------------------------------------ #
+
+@app.get("/api/v1/documents/{document_id}/audio-narration", response_model=AudioNarrationResponse)
+def get_audio_narration(document_id: str) -> AudioNarrationResponse:
+    """Generate structured audio narration script with estimated durations for TTS playback."""
+    doc = repository.get(document_id)
+    filename = doc.filename if doc else "Study Document"
+
+    try:
+        summary, notes_md, concepts, _ = study_service.notes(document_id)
+    except Exception:
+        summary = f"Executive summary audio guide for {filename}."
+        notes_md = "Core study material review."
+        concepts = []
+
+    sections: list[AudioSection] = []
+    
+    # Section 1: Executive Overview
+    clean_summary = summary.replace("📌 Purpose & Scope:", "Purpose and scope: ").replace("⚡ Key Logical Takeaways:", "Key takeaways: ").replace("•", " ")
+    sections.append(
+        AudioSection(
+            title="Executive Overview",
+            text=f"Welcome to your LearnSphere audio study session for {filename}. {clean_summary}",
+            estimated_duration_sec=max(15, len(clean_summary.split()) * 2 // 5)
+        )
+    )
+
+    # Section 2: Key Concepts Breakdown
+    if concepts:
+        concept_texts = [f"{c.term}: {c.definition}" for c in concepts]
+        narrative_concepts = "Here are the key domain concepts. " + " ".join(concept_texts)
+        sections.append(
+            AudioSection(
+                title="Key Vocabulary & Concepts",
+                text=narrative_concepts,
+                estimated_duration_sec=max(20, len(narrative_concepts.split()) * 2 // 5)
+            )
+        )
+
+    # Section 3: Deep Study Notes Summary
+    clean_notes = notes_md.replace("#", "").replace("*", "").replace("-", " ")
+    brief_notes = clean_notes[:600] + ("..." if len(clean_notes) > 600 else "")
+    sections.append(
+        AudioSection(
+            title="Core Mechanism Breakdown",
+            text=f"Deep study notes summary: {brief_notes}",
+            estimated_duration_sec=max(25, len(brief_notes.split()) * 2 // 5)
+        )
+    )
+
+    total_duration = sum(s.estimated_duration_sec for s in sections)
+    return AudioNarrationResponse(
+        document_id=document_id,
+        title=f"Audio Study Guide: {filename}",
+        total_sections=len(sections),
+        estimated_total_minutes=round(total_duration / 60.0, 1),
+        sections=sections
+    )
+
