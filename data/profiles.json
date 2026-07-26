@@ -18,9 +18,75 @@
         "correct": 2,
         "confidence_total": 21,
         "misconception_count": 2
+      },
+      "Quantum Superposition Is The Foundational Principle Where": {
+        "attempts": 2,
+        "correct": 1,
+        "confidence_total": 9,
+        "misconception_count": 1
+      },
+      "Quantum Superposition": {
+        "attempts": 4,
+        "correct": 2,
+        "confidence_total": 18,
+        "misconception_count": 2
       }
     },
     "recent_misconceptions": [
+      {
+        "id": "m-70268c91",
+        "topic": "Quantum Superposition",
+        "label": "Incomplete Causal Model in Quantum Superposition",
+        "why": "Your answer 'Incorrect prerequisite choice' relies on surface observation rather than the underlying mechanism.",
+        "common_intuition": "Assuming surface correlation directly explains Quantum Superposition.",
+        "scientific_reality": "The core relationship is defined by: Core mechanism of Quantum Superposition.",
+        "correction": "Key Concept: Core mechanism of Quantum Superposition.",
+        "verification_check": "Which principle best supports the correct explanation (Core mechanism of Quantum Superposition)?",
+        "verification_options": [
+          "The core structural relationship identified in the source text",
+          "Surface observational correlation",
+          "Arbitrary environmental variation",
+          "Static non-dynamic equilibrium"
+        ],
+        "verification_correct_index": 0,
+        "created_at": "2026-07-26 13:44"
+      },
+      {
+        "id": "m-6407d19a",
+        "topic": "Quantum Superposition",
+        "label": "Incomplete Causal Model in Quantum Superposition",
+        "why": "Your answer 'Incorrect prerequisite choice' relies on surface observation rather than the underlying mechanism.",
+        "common_intuition": "Assuming surface correlation directly explains Quantum Superposition.",
+        "scientific_reality": "The core relationship is defined by: Core mechanism of Quantum Superposition.",
+        "correction": "Key Concept: Core mechanism of Quantum Superposition.",
+        "verification_check": "Which principle best supports the correct explanation (Core mechanism of Quantum Superposition)?",
+        "verification_options": [
+          "The core structural relationship identified in the source text",
+          "Surface observational correlation",
+          "Arbitrary environmental variation",
+          "Static non-dynamic equilibrium"
+        ],
+        "verification_correct_index": 0,
+        "created_at": "2026-07-26 13:35"
+      },
+      {
+        "id": "m-897c5864",
+        "topic": "Quantum Superposition Is The Foundational Principle Where",
+        "label": "Incomplete Causal Model in Quantum Superposition Is The Foundational Principle Where",
+        "why": "Your answer 'Incorrect prerequisite choice' relies on surface observation rather than the underlying mechanism.",
+        "common_intuition": "Assuming surface correlation directly explains Quantum Superposition Is The Foundational Principle Where.",
+        "scientific_reality": "The core relationship is defined by: Core mechanism of Quantum Superposition Is The Foundational Principle Where.",
+        "correction": "Key Concept: Core mechanism of Quantum Superposition Is The Foundational Principle Where.",
+        "verification_check": "Which principle best supports the correct explanation (Core mechanism of Quantum Superposition Is The Foundational Principle Where)?",
+        "verification_options": [
+          "The core structural relationship identified in the source text",
+          "Surface observational correlation",
+          "Arbitrary environmental variation",
+          "Static non-dynamic equilibrium"
+        ],
+        "verification_correct_index": 0,
+        "created_at": "2026-07-26 13:17"
+      },
       {
         "id": "m-seasons-01",
         "topic": "Earth & Planetary Science",
@@ -40,8 +106,69 @@
         "created_at": "2026-07-21 17:39"
       }
     ],
-    "attempt_history": [],
-    "updated_at": "2026-07-21T17:39:41.807041+00:00"
+    "attempt_history": [
+      {
+        "id": "cddd6258",
+        "topic": "Quantum Superposition",
+        "question": "Re-test after foundation repair: Quantum Superposition",
+        "student_answer": "Correct unlocked response",
+        "correct_answer": "Correct concept mechanism",
+        "confidence": 5,
+        "is_correct": true,
+        "timestamp": "13:44:29"
+      },
+      {
+        "id": "5c9e1495",
+        "topic": "Quantum Superposition",
+        "question": "X-Ray Micro-Probe: Quantum Superposition",
+        "student_answer": "Incorrect prerequisite choice",
+        "correct_answer": "Core principle of Quantum Superposition",
+        "confidence": 4,
+        "is_correct": false,
+        "timestamp": "13:44:29"
+      },
+      {
+        "id": "28e3813f",
+        "topic": "Quantum Superposition",
+        "question": "Re-test after foundation repair: Quantum Superposition",
+        "student_answer": "Correct unlocked response",
+        "correct_answer": "Correct concept mechanism",
+        "confidence": 5,
+        "is_correct": true,
+        "timestamp": "13:35:58"
+      },
+      {
+        "id": "a070045a",
+        "topic": "Quantum Superposition",
+        "question": "X-Ray Micro-Probe: Quantum Superposition",
+        "student_answer": "Incorrect prerequisite choice",
+        "correct_answer": "Core principle of Quantum Superposition",
+        "confidence": 4,
+        "is_correct": false,
+        "timestamp": "13:35:58"
+      },
+      {
+        "id": "0bee74ef",
+        "topic": "Quantum Superposition Is The Foundational Principle Where",
+        "question": "Re-test after foundation repair: Quantum Superposition Is The Foundational Principle Where",
+        "student_answer": "Correct unlocked response",
+        "correct_answer": "Correct concept mechanism",
+        "confidence": 5,
+        "is_correct": true,
+        "timestamp": "13:17:33"
+      },
+      {
+        "id": "5c767145",
+        "topic": "Quantum Superposition Is The Foundational Principle Where",
+        "question": "X-Ray Micro-Probe: Quantum Superposition Is The Foundational Principle Where",
+        "student_answer": "Incorrect prerequisite choice",
+        "correct_answer": "Core principle of Quantum Superposition Is The Foundational Principle Where",
+        "confidence": 4,
+        "is_correct": false,
+        "timestamp": "13:17:33"
+      }
+    ],
+    "updated_at": "2026-07-26T13:44:29.797074+00:00"
   },
   "test_user": {
     "topics": {

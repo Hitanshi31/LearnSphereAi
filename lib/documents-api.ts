@@ -286,6 +286,7 @@ export type ConceptNode = {
   label: string;
   summary: string;
   type: "core" | "process" | "outcome" | "definition";
+  diagnostic_state?: string;
 };
 
 export type VisualExplainer = {
@@ -293,6 +294,7 @@ export type VisualExplainer = {
   title: string;
   mermaid_code: string;
   concept_nodes: ConceptNode[];
+  prerequisites?: PrerequisiteEdge[];
 };
 
 export async function generateVisual(
@@ -358,4 +360,131 @@ export type AudioNarration = {
 export async function getAudioNarration(documentId: string): Promise<AudioNarration> {
   return apiJson<AudioNarration>(`/api/v1/documents/${documentId}/audio-narration`);
 }
+
+// ─── Knowledge X-Ray Diagnostic Engine ─────────────────────────────────────────
+
+export type PrerequisiteEdge = {
+  source_concept_id: string;
+  target_concept_id: string;
+  relationship: string;
+  confidence: number;
+};
+
+export type ConceptSuspicion = {
+  concept_id: string;
+  concept_label: string;
+  suspicion_score: number;
+  distance: number;
+  evidence: string[];
+};
+
+export type XRayDiagnosisResponse = {
+  original_failed_concept: string;
+  suspected_root_concept: string;
+  prerequisite_chain: string[];
+  candidate_suspicions: ConceptSuspicion[];
+  probe_question: QuizQuestion | null;
+  node_states: Record<string, string>;
+};
+
+export type XRayProbeResponse = {
+  probe_passed: boolean;
+  root_gap_confirmed: boolean;
+  confirmed_root_concept: string;
+  explanation: string;
+  repair_misconception: MisconceptionInsight | null;
+  next_action: "repair_root" | "evaluate_next_prerequisite" | "original_concept_retest";
+};
+
+export type XRayReturnVerifyResponse = {
+  unlocked: boolean;
+  original_concept: string;
+  root_concept: string;
+  explanation: string;
+  updated_mastery: number;
+};
+
+export type ReadinessItem = {
+  concept_label: string;
+  mastery: number;
+  status: "strong" | "moderate" | "weak";
+  prerequisite_for: string;
+  risk_level: "low" | "medium" | "high";
+};
+
+export type ReadinessReportResponse = {
+  document_id: string;
+  title: string;
+  overall_readiness_score: number;
+  items: ReadinessItem[];
+};
+
+export async function initiateXRayDiagnose(
+  documentId: string,
+  failedConcept: string,
+  question = "",
+  studentAnswer = "",
+  learnerId = "alex",
+): Promise<XRayDiagnosisResponse> {
+  return apiJson<XRayDiagnosisResponse>(`/api/v1/xray/diagnose`, {
+    method: "POST",
+    body: JSON.stringify({
+      learner_id: learnerId,
+      document_id: documentId,
+      failed_concept: failedConcept,
+      question,
+      student_answer: studentAnswer,
+    }),
+  });
+}
+
+export async function submitXRayProbe(
+  documentId: string,
+  originalConcept: string,
+  suspectedConcept: string,
+  choiceIndex: number,
+  studentAnswer = "",
+  learnerId = "alex",
+): Promise<XRayProbeResponse> {
+  return apiJson<XRayProbeResponse>(`/api/v1/xray/probe`, {
+    method: "POST",
+    body: JSON.stringify({
+      learner_id: learnerId,
+      document_id: documentId,
+      original_concept: originalConcept,
+      suspected_concept: suspectedConcept,
+      choice_index: choiceIndex,
+      student_answer: studentAnswer,
+    }),
+  });
+}
+
+export async function verifyOriginalConceptXRay(
+  documentId: string,
+  originalConcept: string,
+  rootConcept: string,
+  choiceIndex: number,
+  studentAnswer = "",
+  learnerId = "alex",
+): Promise<XRayReturnVerifyResponse> {
+  return apiJson<XRayReturnVerifyResponse>(`/api/v1/xray/return-verify`, {
+    method: "POST",
+    body: JSON.stringify({
+      learner_id: learnerId,
+      document_id: documentId,
+      original_concept: originalConcept,
+      root_concept: rootConcept,
+      choice_index: choiceIndex,
+      student_answer: studentAnswer,
+    }),
+  });
+}
+
+export async function getReadinessXRay(
+  documentId: string,
+  learnerId = "alex",
+): Promise<ReadinessReportResponse> {
+  return apiJson<ReadinessReportResponse>(`/api/v1/xray/readiness/${documentId}?learner_id=${learnerId}`);
+}
+
 

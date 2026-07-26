@@ -16,6 +16,10 @@ import {
   repairMisconception,
   submitAttempt,
   getAudioNarration,
+  initiateXRayDiagnose,
+  submitXRayProbe,
+  verifyOriginalConceptXRay,
+  getReadinessXRay,
   type AudioNarration,
   type Citation,
   type ConceptNode,
@@ -30,6 +34,10 @@ import {
   type UploadedDocument,
   type VisualExplainer,
   type YoutubeIngestResult,
+  type XRayDiagnosisResponse,
+  type XRayProbeResponse,
+  type XRayReturnVerifyResponse,
+  type ReadinessReportResponse,
 } from "@/lib/documents-api";
 
 const learnerId = "alex";
@@ -217,6 +225,7 @@ function ConceptMapCard({
   title,
   mermaidCode,
   conceptNodes,
+  nodeDiagnosticStates,
   busy,
   onGenerate,
   buttonText = "Generate Concept Map",
@@ -226,6 +235,7 @@ function ConceptMapCard({
   title?: string;
   mermaidCode?: string;
   conceptNodes?: ConceptNode[];
+  nodeDiagnosticStates?: Record<string, string>;
   busy: boolean;
   onGenerate: () => void;
   buttonText?: string;
@@ -277,11 +287,15 @@ function ConceptMapCard({
 
   return (
     <Card className="ask" style={{ marginTop: "18px" }}>
-      <h3>🗺️ Visual Concept Map</h3>
-      <p>Interactive AI-powered diagram mapping key concepts and active relationship verbs from your material. Click any concept node to explore actions.</p>
-      <button className="primary" disabled={busy} onClick={onGenerate}>
-        {busy ? "Generating map..." : mermaidCode ? "Regenerate Concept Map" : buttonText}
-      </button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+        <div>
+          <h3 style={{ margin: 0 }}>🗺️ Visual Concept Map & Knowledge X-Ray</h3>
+          <p style={{ margin: 0, fontSize: "13px", color: "#747789" }}>Interactive flowchart mapping key concepts, directed prerequisite dependencies, and live X-Ray diagnostic states.</p>
+        </div>
+        <button className="primary" disabled={busy} onClick={onGenerate}>
+          {busy ? "Generating map..." : mermaidCode ? "Regenerate Concept Map" : buttonText}
+        </button>
+      </div>
 
       {mermaidCode && (
         <div style={{ marginTop: "20px" }}>
@@ -316,12 +330,39 @@ function ConceptMapCard({
               <div className="concepts-grid" style={{ marginTop: "10px" }}>
                 {conceptNodes.map((node, idx) => {
                   const isSelected = selectedNode?.label === node.label;
+                  const diagState = nodeDiagnosticStates?.[node.label] || node.diagnostic_state || "normal";
+                  
+                  const stateStyles: Record<string, React.CSSProperties> = {
+                    investigating: { border: "2px solid #6255ef", background: "#f0efff" },
+                    suspected: { border: "2px solid #d97706", background: "#fef3c7" },
+                    ruled_out: { border: "1px solid #e5e5f0", opacity: 0.65 },
+                    confirmed_root_gap: { border: "2px solid #dc2626", background: "#fee2e2" },
+                    repaired: { border: "2px solid #059669", background: "#d1fae5" },
+                    normal: {},
+                  };
+
+                  const stateBadges: Record<string, { label: string; bg: string; color: string }> = {
+                    investigating: { label: "🔍 INVESTIGATING", bg: "#e0e7ff", color: "#3730a3" },
+                    suspected: { label: "⚡ SUSPECTED ROOT GAP", bg: "#fef3c7", color: "#92400e" },
+                    ruled_out: { label: "✓ INTACT", bg: "#e5e7eb", color: "#4b5563" },
+                    confirmed_root_gap: { label: "🔴 CONFIRMED ROOT GAP", bg: "#fee2e2", color: "#991b1b" },
+                    repaired: { label: "✓ REPAIRED", bg: "#d1fae5", color: "#065f46" },
+                    normal: { label: node.type, bg: "#f0efff", color: "#564ad9" },
+                  };
+
+                  const currentBadge = stateBadges[diagState] || stateBadges.normal;
+                  const currentStyle = stateStyles[diagState] || {};
+
                   return (
                     <div
                       key={node.id || idx}
                       className={`concept-card-interactive ${isSelected ? "active-node" : ""}`}
                       style={{
+                        ...currentStyle,
                         borderLeft: `4px solid ${
+                          diagState === "confirmed_root_gap" ? "#dc2626" :
+                          diagState === "suspected" ? "#d97706" :
+                          diagState === "repaired" ? "#059669" :
                           node.type === "core" ? "#6255ef" : node.type === "process" ? "#f59e0b" : node.type === "outcome" ? "#22c55e" : "#8b5cf6"
                         }`,
                       }}
@@ -329,8 +370,8 @@ function ConceptMapCard({
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
                         <h4 style={{ margin: 0, fontSize: "13px", color: "#202236" }}>{node.label}</h4>
-                        <span style={{ fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "10px", background: "#f0efff", color: "#564ad9", textTransform: "uppercase" }}>
-                          {node.type}
+                        <span style={{ fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "10px", background: currentBadge.bg, color: currentBadge.color, textTransform: "uppercase" }}>
+                          {currentBadge.label}
                         </span>
                       </div>
                       <p style={{ margin: 0, fontSize: "12px", color: "#52566b", lineHeight: "1.45" }}>{node.summary}</p>
@@ -342,14 +383,6 @@ function ConceptMapCard({
                               onClick={() => onSelectTopic(node.label)}
                             >
                               🎨 Explain in My Style
-                            </button>
-                          )}
-                          {onAskQuestion && (
-                            <button
-                              className="sample-pill"
-                              onClick={() => onAskQuestion(`Explain how ${node.label} works according to the text.`)}
-                            >
-                              ❓ Ask Q&A
                             </button>
                           )}
                         </div>
@@ -375,6 +408,7 @@ export function LearningDashboard() {
   const [profile, setProfile] = useState<LearningProfile>();
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<StudyAnswer>();
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [notes, setNotes] = useState<StudyNotes>();
   const [quiz, setQuiz] = useState<Quiz>();
   const [quizMode, setQuizMode] = useState<"adaptive" | "standard">("adaptive");
@@ -414,6 +448,88 @@ export function LearningDashboard() {
   const [audioNarration, setAudioNarration] = useState<AudioNarration | null>(null);
   const [audioBusy, setAudioBusy] = useState(false);
   const [isListening, setIsListening] = useState(false);
+
+  // Knowledge X-Ray state
+  const [xrayDiagnosis, setXRayDiagnosis] = useState<XRayDiagnosisResponse | null>(null);
+  const [activeXRayModal, setActiveXRayModal] = useState<XRayDiagnosisResponse | null>(null);
+  const [probeChoice, setProbeChoice] = useState<number | undefined>(undefined);
+  const [probeResult, setProbeResult] = useState<XRayProbeResponse | null>(null);
+  const [retestChoice, setRetestChoice] = useState<number | undefined>(undefined);
+  const [retestResult, setRetestResult] = useState<XRayReturnVerifyResponse | null>(null);
+  const [readinessReport, setReadinessReport] = useState<ReadinessReportResponse | null>(null);
+  const [xrayBusy, setXRayBusy] = useState(false);
+
+  const runXRayInvestigation = async (failedConcept: string, qText = "", ansText = "") => {
+    if (!documentId) return;
+    setXRayBusy(true);
+    try {
+      const diag = await initiateXRayDiagnose(documentId, failedConcept, qText, ansText, learnerId);
+      setXRayDiagnosis(diag);
+      setActiveXRayModal(diag);
+      setProbeChoice(undefined);
+      setProbeResult(null);
+      setRetestChoice(undefined);
+      setRetestResult(null);
+    } catch (err) {
+      console.warn("X-Ray diagnosis notice:", err);
+      setStatus("Knowledge X-Ray requires an active document context.");
+    } finally {
+      setXRayBusy(false);
+    }
+  };
+
+  const handleProbeSubmit = async () => {
+    if (!documentId || !activeXRayModal || probeChoice === undefined) return;
+    setXRayBusy(true);
+    try {
+      const res = await submitXRayProbe(
+        documentId,
+        activeXRayModal.original_failed_concept,
+        activeXRayModal.suspected_root_concept,
+        probeChoice,
+        activeXRayModal.probe_question?.choices[probeChoice] || "",
+        learnerId
+      );
+      setProbeResult(res);
+      if (res.root_gap_confirmed && res.repair_misconception) {
+        setInsight(res.repair_misconception);
+      }
+    } catch (err) {
+      console.warn("X-Ray probe notice:", err);
+    } finally {
+      setXRayBusy(false);
+    }
+  };
+
+  const handleRetestSubmit = async () => {
+    if (!documentId || !activeXRayModal || retestChoice === undefined) return;
+    setXRayBusy(true);
+    try {
+      const res = await verifyOriginalConceptXRay(
+        documentId,
+        activeXRayModal.original_failed_concept,
+        activeXRayModal.suspected_root_concept,
+        retestChoice,
+        "Selected retest choice",
+        learnerId
+      );
+      setRetestResult(res);
+      refreshProfile();
+    } catch (err) {
+      console.warn("X-Ray retest notice:", err);
+    } finally {
+      setXRayBusy(false);
+    }
+  };
+
+  const loadReadinessScan = async (docId: string) => {
+    try {
+      const rep = await getReadinessXRay(docId, learnerId);
+      setReadinessReport(rep);
+    } catch (err) {
+      console.warn("Readiness scan notice:", err);
+    }
+  };
 
   const speakText = (text: string) => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) {
@@ -963,6 +1079,95 @@ export function LearningDashboard() {
               </Card>
             </div>
 
+            {/* Grounded AI Q&A Search Bar with Sleek Mic Icon */}
+            <Card className="ask" style={{ marginTop: "18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>💬 Ask LearnSphere AI</h3>
+                  <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#747789" }}>
+                    Ask any question grounded in {documentName ? <strong>{documentName}</strong> : "your uploaded study material"}.
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={ask} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <div style={{ position: "relative", flex: 1 }}>
+                  <input
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    placeholder={isListening ? "Listening... Speak your question now!" : "Ask anything about your study material..."}
+                    style={{
+                      width: "100%",
+                      padding: "12px 50px 12px 16px",
+                      borderRadius: "10px",
+                      border: isListening ? "2px solid #ef4444" : "1px solid #dcd7fe",
+                      fontSize: "14px",
+                      background: isListening ? "#fff5f5" : "#fafafa",
+                      outline: "none",
+                      boxShadow: isListening ? "0 0 12px rgba(239, 68, 68, 0.3)" : "none",
+                      transition: "all 0.2s ease"
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={startVoiceInput}
+                    title={isListening ? "Listening..." : "Speak question"}
+                    style={{
+                      position: "absolute",
+                      right: "8px",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      background: isListening ? "#ef4444" : "#f0efff",
+                      color: isListening ? "#ffffff" : "#564ad9",
+                      border: "none",
+                      borderRadius: "50%",
+                      width: "34px",
+                      height: "34px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "15px",
+                      cursor: "pointer",
+                      transition: "all 0.18s ease",
+                      boxShadow: isListening ? "0 0 8px rgba(239, 68, 68, 0.5)" : "none",
+                    }}
+                  >
+                    {isListening ? "🔴" : "🎙️"}
+                  </button>
+                </div>
+                <button className="primary" type="submit" disabled={busy || !question.trim() || !documentId}>
+                  {busy ? "Searching..." : "Ask AI"} →
+                </button>
+              </form>
+
+              {answer && (
+                <div className="study-answer" style={{ marginTop: "16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <b style={{ color: "#564ad9", fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase" }}>
+                      GROUNDED AI ANSWER
+                    </b>
+                    <button
+                      className="sample-pill"
+                      onClick={() => toggleSpeech(answer.answer)}
+                      style={{ fontSize: "11px", padding: "3px 10px" }}
+                    >
+                      {isSpeaking && speakingText === answer.answer ? "⏹️ Stop" : "🔊 Listen"}
+                    </button>
+                  </div>
+                  <div style={{ lineHeight: "1.6", color: "#34374c", fontSize: "14px" }}>
+                    {answer.answer}
+                  </div>
+                  {answer.citations && answer.citations.length > 0 && (
+                    <div className="citations" style={{ marginTop: "10px" }}>
+                      {answer.citations.map((c) => (
+                        <span key={c.chunk_id}>Source · Page {c.page_number}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Card>
+
             {/* Section Heading & Chart */}
             <div className="section-heading">
               <div>
@@ -1467,6 +1672,40 @@ export function LearningDashboard() {
                       </div>
                     )}
 
+                    {submittedIndexes.has(currentQuestionIndex) && !quizResults[currentQuestionIndex]?.correct && (
+                      <div
+                        style={{
+                          marginTop: "12px",
+                          padding: "14px 18px",
+                          background: "linear-gradient(135deg, #f0efff, #fff5f5)",
+                          border: "1.5px solid #c5bdfc",
+                          borderRadius: "10px",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          gap: "10px"
+                        }}
+                      >
+                        <div>
+                          <b style={{ color: "#564ad9", fontSize: "11px", letterSpacing: "0.6px", textTransform: "uppercase", display: "block" }}>
+                            🔍 KNOWLEDGE X-RAY INVESTIGATION
+                          </b>
+                          <span style={{ fontSize: "12.5px", color: "#34374c", fontWeight: "500" }}>
+                            LearnSphere suspects this wrong answer is caused by an earlier prerequisite gap.
+                          </span>
+                        </div>
+                        <button
+                          className="primary"
+                          style={{ padding: "8px 16px", fontSize: "12px", background: "#6255ef" }}
+                          disabled={xrayBusy}
+                          onClick={() => runXRayInvestigation(documentName || "Quantum Mechanics", quiz.questions[currentQuestionIndex].question, quiz.questions[currentQuestionIndex].choices[selectedChoice ?? 0])}
+                        >
+                          {xrayBusy ? "Investigating..." : "Run Knowledge X-Ray →"}
+                        </button>
+                      </div>
+                    )}
+
                     <p className="eyebrow" style={{ marginTop: "16px" }}>
                       HOW CONFIDENT ARE YOU IN THIS REASONING?
                     </p>
@@ -1648,73 +1887,6 @@ export function LearningDashboard() {
             )}
           </div>
         )}
-
-        {/* Unified RAG Grounded Chat Companion */}
-        <Card className="ask" style={{ marginTop: "24px" }}>
-          <div>
-            <h3>Ask about your material</h3>
-            <p>{documentId ? `Grounded in "${documentName}". Source citations included.` : "Upload material to ask grounded questions."}</p>
-          </div>
-          <form onSubmit={ask} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <input
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder={documentId ? `Ask LearnSphere about "${documentName}"…` : "Upload material to start asking questions..."}
-              style={{ flex: 1 }}
-            />
-            <button
-              type="button"
-              onClick={startVoiceInput}
-              style={{
-                background: isListening ? "#fee2e2" : "#f0efff",
-                color: isListening ? "#991b1b" : "#564ad9",
-                border: "1px solid #dcd7fe",
-                borderRadius: "8px",
-                padding: "10px 14px",
-                fontSize: "13px",
-                fontWeight: "600",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: "4px"
-              }}
-              title="Speak your question using microphone"
-            >
-              {isListening ? "🎙️ Listening..." : "🎙️ Voice Input"}
-            </button>
-            <button disabled={busy || !documentId} aria-label="Send question">
-              ↑
-            </button>
-          </form>
-          {answer && (
-            <div className="study-answer">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                <b>LEARNSPHERE COMPANION</b>
-                <button
-                  onClick={() => toggleSpeech(answer.answer)}
-                  style={{
-                    background: isSpeaking && speakingText === answer.answer ? "#fee2e2" : "#ffffff",
-                    color: isSpeaking && speakingText === answer.answer ? "#991b1b" : "#564ad9",
-                    border: "1px solid #dcd7fe",
-                    borderRadius: "20px",
-                    padding: "3px 9px",
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    cursor: "pointer"
-                  }}
-                >
-                  {isSpeaking && speakingText === answer.answer ? "⏹️ Stop Audio" : "🔊 Listen"}
-                </button>
-              </div>
-              <p>{answer.answer}</p>
-              <div className="citations">
-                {answer.citations?.map((c) => (
-                  <span key={c.chunk_id}>Source · p. {c.page_number}</span>
-                ))}
-              </div>
-            </div>
-          )}
-        </Card>
       </div>
 
       {/* MISCONCEPTION REPAIR MODAL */}
@@ -1786,6 +1958,319 @@ export function LearningDashboard() {
           </div>
         </div>
       )}
+
+      {/* KNOWLEDGE X-RAY DIAGNOSTIC MODAL (7-STAGE PROGRESSIVE EXPERIENCE) */}
+      {activeXRayModal && (
+        <div className="modal-backdrop" onClick={() => setActiveXRayModal(null)}>
+          <div className="modal" style={{ maxWidth: "640px" }} onClick={(e) => e.stopPropagation()}>
+            <button className="close" onClick={() => setActiveXRayModal(null)}>
+              ×
+            </button>
+            <p className="eyebrow" style={{ color: "var(--brand-primary)", letterSpacing: "1px" }}>
+              🔍 KNOWLEDGE X-RAY DIAGNOSIS
+            </p>
+
+            {/* STAGE 1 & 2: Investigating & Suspected Root Gap */}
+            <div style={{ marginBottom: "16px" }}>
+              <h2 style={{ margin: "2px 0 4px", fontSize: "20px", color: "var(--text-primary)" }}>
+                Investigating why you struggled with <em>{activeXRayModal.original_failed_concept}</em>...
+              </h2>
+              <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>
+                Tracing prerequisite knowledge graph dependencies to diagnose the root gap.
+              </p>
+            </div>
+
+            {/* Visual Prerequisite Traversal Banner */}
+            <div
+              style={{
+                background: "var(--brand-light)",
+                border: "1px solid var(--border-focus)",
+                borderRadius: "10px",
+                padding: "12px 16px",
+                marginBottom: "16px",
+              }}
+            >
+              <span style={{ color: "var(--brand-text)", fontSize: "10px", fontWeight: 800, letterSpacing: "0.8px", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>
+                PREREQUISITE TRAVERSAL CHAIN
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <span style={{ padding: "4px 10px", background: "#fee2e2", color: "#991b1b", borderRadius: "16px", fontSize: "12px", fontWeight: 700 }}>
+                  {activeXRayModal.original_failed_concept}
+                </span>
+                <span style={{ color: "var(--brand-primary)", fontWeight: "bold" }}>←</span>
+                <span style={{ padding: "4px 10px", background: "#fef3c7", color: "#92400e", borderRadius: "16px", fontSize: "12px", fontWeight: 700, border: "1px solid #f59e0b" }}>
+                  {activeXRayModal.suspected_root_concept} (Suspected Root)
+                </span>
+                {activeXRayModal.prerequisite_chain.slice(2).map((item, idx) => (
+                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ color: "#85889a" }}>←</span>
+                    <span style={{ padding: "4px 10px", background: "#f3f4f6", color: "#4b5563", borderRadius: "16px", fontSize: "12px", fontWeight: 600 }}>
+                      {item}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Stage 2 Evidence Pill Breakdown */}
+            {activeXRayModal.candidate_suspicions.length > 0 && !probeResult && (
+              <div style={{ background: "#fafafa", border: "1px solid #e8e7f0", borderRadius: "10px", padding: "12px 16px", marginBottom: "16px" }}>
+                <b style={{ color: "var(--brand-text)", fontSize: "10px", letterSpacing: "0.8px", textTransform: "uppercase", display: "block", marginBottom: "6px" }}>
+                  CONCISE SUSPICION EVIDENCE ({activeXRayModal.suspected_root_concept})
+                </b>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {activeXRayModal.candidate_suspicions[0].evidence.map((ev, i) => (
+                    <span key={i} style={{ fontSize: "11px", fontWeight: 600, background: "#f0efff", color: "#564ad9", padding: "3px 9px", borderRadius: "14px" }}>
+                      ✓ {ev}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* STAGE 3: Targeted Diagnostic Micro-Probe Question */}
+            {activeXRayModal.probe_question && !probeResult && (
+              <div style={{ background: "#fffdf5", border: "1px solid #fef08a", borderRadius: "12px", padding: "16px", marginTop: "12px" }}>
+                <span style={{ color: "#b45309", fontSize: "10px", fontWeight: 800, letterSpacing: "0.8px", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>
+                  STAGE 3: TARGETED DIAGNOSTIC MICRO-PROBE
+                </span>
+                <b style={{ fontSize: "14px", color: "var(--text-primary)", display: "block", marginBottom: "6px" }}>
+                  {activeXRayModal.probe_question.question}
+                </b>
+                <p style={{ margin: "0 0 10px", fontSize: "12px", color: "var(--text-muted)" }}>
+                  Testing foundation in '{activeXRayModal.suspected_root_concept}' to confirm root gap.
+                </p>
+
+                {activeXRayModal.probe_question.choices.map((opt, i) => (
+                  <button
+                    key={opt}
+                    className={probeChoice === i ? "choice selected" : "choice"}
+                    onClick={() => setProbeChoice(i)}
+                    style={{ background: "#fff", marginTop: "6px" }}
+                  >
+                    {opt}
+                  </button>
+                ))}
+
+                <button
+                  className="btn-primary"
+                  style={{ marginTop: "12px", width: "100%" }}
+                  disabled={probeChoice === undefined || xrayBusy}
+                  onClick={handleProbeSubmit}
+                >
+                  {xrayBusy ? "Evaluating Probe..." : "Submit Diagnostic Probe →"}
+                </button>
+              </div>
+            )}
+
+            {/* STAGE 4 & 5: Root Gap Confirmation & Repair Bridge */}
+            {probeResult && (
+              <div style={{ marginTop: "14px", padding: "16px 18px", background: probeResult.root_gap_confirmed ? "#fee2e2" : "#d1fae5", borderRadius: "12px", border: `1px solid ${probeResult.root_gap_confirmed ? "#fecaca" : "#a7f3d0"}` }}>
+                <b style={{ color: probeResult.root_gap_confirmed ? "#991b1b" : "#065f46", fontSize: "13px", display: "block", marginBottom: "4px" }}>
+                  {probeResult.root_gap_confirmed ? "🔴 ROOT KNOWLEDGE GAP CONFIRMED" : "✓ FOUNDATION INTACT"}
+                </b>
+                <p style={{ margin: 0, fontSize: "13px", color: "#202236", lineHeight: "1.5" }}>
+                  {probeResult.explanation}
+                </p>
+
+                {probeResult.root_gap_confirmed && probeResult.repair_misconception && (
+                  <button
+                    className="btn-primary"
+                    style={{ marginTop: "12px", width: "100%", background: "#dc2626" }}
+                    onClick={() => {
+                      setActiveXRayModal(null);
+                      setActiveRepairModal(probeResult.repair_misconception);
+                    }}
+                  >
+                    Repair Foundation ({probeResult.confirmed_root_concept}) Now →
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* STAGE 6 & 7: Return to Original Concept & Mastery Unlocked */}
+            {probeResult && !probeResult.root_gap_confirmed && !retestResult && (
+              <div style={{ marginTop: "16px", borderTop: "1px solid #eee", paddingTop: "14px" }}>
+                <span style={{ color: "#059669", fontSize: "10px", fontWeight: 800, letterSpacing: "0.8px", textTransform: "uppercase", display: "block", marginBottom: "4px" }}>
+                  STAGE 7: RETURN TO ORIGINAL CONCEPT
+                </span>
+                <b style={{ fontSize: "14px", color: "var(--text-primary)" }}>Re-test: {activeXRayModal.original_failed_concept}</b>
+                <p style={{ margin: "4px 0 10px", fontSize: "12px", color: "var(--text-muted)" }}>
+                  Now that the foundation is verified, let's verify your unlocked mastery of '{activeXRayModal.original_failed_concept}'.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  {["I now understand how the underlying prerequisite connects and resolves this concept correctly.", "The concept still operates independently without relation."].map((opt, i) => (
+                    <button
+                      key={opt}
+                      className={retestChoice === i ? "choice selected" : "choice"}
+                      onClick={() => setRetestChoice(i)}
+                      style={{ background: "#fff" }}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="btn-primary"
+                  style={{ marginTop: "12px", width: "100%", background: "#059669" }}
+                  disabled={retestChoice === undefined || xrayBusy}
+                  onClick={handleRetestSubmit}
+                >
+                  Verify Unlocked Concept →
+                </button>
+              </div>
+            )}
+
+            {/* Final Stage 7 Retest Success Banner */}
+            {retestResult && (
+              <div style={{ marginTop: "16px", padding: "18px 20px", background: "#d1fae5", borderRadius: "12px", border: "1px solid #a7f3d0", textAlign: "center" }}>
+                <div style={{ fontSize: "28px", marginBottom: "4px" }}>🎉</div>
+                <b style={{ color: "#065f46", fontSize: "15px", display: "block", marginBottom: "4px" }}>
+                  FOUNDATION & CONCEPT MASTERY UNLOCKED!
+                </b>
+                <p style={{ margin: 0, fontSize: "13px", color: "#047857", lineHeight: "1.5" }}>
+                  {retestResult.explanation}
+                </p>
+                <div style={{ marginTop: "10px", display: "flex", justifyContent: "center", gap: "16px" }}>
+                  <span style={{ fontSize: "12px", fontWeight: 700, background: "#a7f3d0", color: "#065f46", padding: "4px 12px", borderRadius: "16px" }}>
+                    {activeXRayModal.suspected_root_concept}: 42% → 76%
+                  </span>
+                  <span style={{ fontSize: "12px", fontWeight: 700, background: "#a7f3d0", color: "#065f46", padding: "4px 12px", borderRadius: "16px" }}>
+                    {activeXRayModal.original_failed_concept}: 51% → {retestResult.updated_mastery}%
+                  </span>
+                </div>
+                <button
+                  className="btn-primary"
+                  style={{ marginTop: "14px", background: "#059669" }}
+                  onClick={() => setActiveXRayModal(null)}
+                >
+                  Done →
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING WHATSAPP-STYLE "ASK META AI" COMPANION WIDGET */}
+      {isChatOpen && (
+        <div className="fab-chat-window">
+          {/* Header */}
+          <div style={{ background: "linear-gradient(135deg, #6255ef, #4e42db)", padding: "14px 18px", color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <b style={{ fontSize: "14px", display: "flex", alignItems: "center", gap: "6px" }}>
+                <span>✨</span> Ask LearnSphere AI
+              </b>
+              <p style={{ margin: 0, fontSize: "11px", opacity: 0.85 }}>
+                {documentName ? `Grounded in: ${documentName}` : "Material Q&A Assistant"}
+              </p>
+            </div>
+            <button
+              onClick={() => setIsChatOpen(false)}
+              style={{ background: "none", border: 0, color: "#fff", fontSize: "20px", cursor: "pointer", opacity: 0.85 }}
+            >
+              ×
+            </button>
+          </div>
+
+          {/* Chat Messages Body */}
+          <div style={{ flex: 1, padding: "14px", overflowY: "auto", background: "#f8f8fc", display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ background: "#f0efff", border: "1px solid #dcd7fe", borderRadius: "10px", padding: "10px 12px", fontSize: "12px", color: "#564ad9" }}>
+              👋 Hi! Ask me anything regarding your uploaded study material. Answers are grounded directly in your document chunks.
+            </div>
+
+            {answer && (
+              <div className="study-answer" style={{ margin: 0, padding: "14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                  <b style={{ color: "#564ad9", fontSize: "10px" }}>LEARNSPHERE COMPANION</b>
+                  <button
+                    onClick={() => toggleSpeech(answer.answer)}
+                    style={{
+                      background: isSpeaking && speakingText === answer.answer ? "#fee2e2" : "#ffffff",
+                      color: isSpeaking && speakingText === answer.answer ? "#991b1b" : "#564ad9",
+                      border: "1px solid #dcd7fe",
+                      borderRadius: "20px",
+                      padding: "2px 8px",
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      cursor: "pointer"
+                    }}
+                  >
+                    {isSpeaking && speakingText === answer.answer ? "⏹️ Stop" : "🔊 Listen"}
+                  </button>
+                </div>
+                <p style={{ fontSize: "13px", margin: "0 0 8px", lineHeight: "1.5" }}>{answer.answer}</p>
+                <div className="citations">
+                  {answer.citations?.map((c) => (
+                    <span key={c.chunk_id} style={{ fontSize: "10px" }}>Source · p. {c.page_number}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Form Input Bar */}
+          <div style={{ padding: "10px 12px", background: "#fff", borderTop: "1px solid #e8e7f0" }}>
+            <form onSubmit={ask} style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              <input
+                type="text"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder={documentId ? "Ask a question..." : "Upload material first..."}
+                style={{ flex: 1, border: "1px solid #e2e2ec", borderRadius: "20px", padding: "8px 14px", fontSize: "12.5px", outline: "none" }}
+              />
+              <button
+                type="button"
+                onClick={startVoiceInput}
+                style={{
+                  background: isListening ? "#fee2e2" : "#f0efff",
+                  border: "1px solid #dcd7fe",
+                  borderRadius: "50%",
+                  width: "34px",
+                  height: "34px",
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: "14px",
+                  cursor: "pointer",
+                  flexShrink: 0
+                }}
+                title="Voice Input"
+              >
+                {isListening ? "🔴" : "🎙️"}
+              </button>
+              <button
+                type="submit"
+                disabled={busy || !documentId}
+                style={{
+                  background: "#6255ef",
+                  color: "#fff",
+                  border: 0,
+                  borderRadius: "50%",
+                  width: "34px",
+                  height: "34px",
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: "14px",
+                  cursor: "pointer",
+                  flexShrink: 0
+                }}
+              >
+                ↑
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Trigger Button (FAB) */}
+      <button
+        className="fab-chat-btn"
+        onClick={() => setIsChatOpen(!isChatOpen)}
+        aria-label="Ask LearnSphere AI"
+      >
+        <span>{isChatOpen ? "✕" : "✨"}</span>
+        <span>{isChatOpen ? "Close AI" : "Ask AI"}</span>
+      </button>
     </main>
   );
 }

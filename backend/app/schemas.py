@@ -157,13 +157,21 @@ class YoutubeIngestResponse(BaseModel):
     status: str
 
 
-# ── Visual explainer ───────────────────────────────────────────────────────────
+# ── Visual explainer & Directed Prerequisite Graph ────────────────────────────
 
 class ConceptNode(BaseModel):
     id: str
     label: str
     summary: str
     type: str  # core | process | outcome | definition
+    diagnostic_state: str = "normal"  # normal | investigating | ruled_out | suspected | confirmed_root_gap | repaired
+
+
+class PrerequisiteEdge(BaseModel):
+    source_concept_id: str  # Prerequisite ancestor concept
+    target_concept_id: str  # Dependent concept
+    relationship: str  # e.g. "prerequisite_of", "depends_on", "requires"
+    confidence: float = 0.95
 
 
 class VisualExplainerResponse(BaseModel):
@@ -171,6 +179,86 @@ class VisualExplainerResponse(BaseModel):
     title: str
     mermaid_code: str
     concept_nodes: list[ConceptNode] = Field(default_factory=list)
+    prerequisites: list[PrerequisiteEdge] = Field(default_factory=list)
+
+
+# ── Knowledge X-Ray Diagnostic Intelligence Layer ─────────────────────────────
+
+class ConceptSuspicion(BaseModel):
+    concept_id: str
+    concept_label: str
+    suspicion_score: float
+    distance: int
+    evidence: list[str] = Field(default_factory=list)
+
+
+class XRayDiagnoseRequest(BaseModel):
+    learner_id: str = Field(default="alex", min_length=1, max_length=80)
+    document_id: str
+    failed_concept: str = Field(min_length=2, max_length=200)
+    question: str = Field(default="")
+    student_answer: str = Field(default="")
+
+
+class XRayDiagnosisResponse(BaseModel):
+    original_failed_concept: str
+    suspected_root_concept: str
+    prerequisite_chain: list[str] = Field(default_factory=list)
+    candidate_suspicions: list[ConceptSuspicion] = Field(default_factory=list)
+    probe_question: QuizQuestion | None = None
+    node_states: dict[str, str] = Field(default_factory=dict)
+
+
+class XRayProbeRequest(BaseModel):
+    learner_id: str = Field(default="alex", min_length=1, max_length=80)
+    document_id: str
+    original_concept: str
+    suspected_concept: str
+    question_id: str = Field(default="")
+    choice_index: int = Field(ge=0, le=3)
+    student_answer: str = Field(default="")
+    correct_answer: str = Field(default="")
+
+
+class XRayProbeResponse(BaseModel):
+    probe_passed: bool
+    root_gap_confirmed: bool
+    confirmed_root_concept: str
+    explanation: str
+    repair_misconception: MisconceptionInsight | None = None
+    next_action: str  # "repair_root" | "evaluate_next_prerequisite" | "original_concept_retest"
+
+
+class XRayReturnVerifyRequest(BaseModel):
+    learner_id: str = Field(default="alex", min_length=1, max_length=80)
+    document_id: str
+    original_concept: str
+    root_concept: str
+    choice_index: int = Field(ge=0, le=3)
+    student_answer: str = Field(default="")
+
+
+class XRayReturnVerifyResponse(BaseModel):
+    unlocked: bool
+    original_concept: str
+    root_concept: str
+    explanation: str
+    updated_mastery: int
+
+
+class ReadinessItem(BaseModel):
+    concept_label: str
+    mastery: int
+    status: str  # "strong" | "moderate" | "weak"
+    prerequisite_for: str
+    risk_level: str  # "low" | "medium" | "high"
+
+
+class ReadinessReportResponse(BaseModel):
+    document_id: str
+    title: str
+    overall_readiness_score: int
+    items: list[ReadinessItem] = Field(default_factory=list)
 
 
 # ── Explain in Different Styles ────────────────────────────────────────────────
@@ -211,5 +299,6 @@ class AudioNarrationResponse(BaseModel):
     total_sections: int
     estimated_total_minutes: float
     sections: list[AudioSection] = Field(default_factory=list)
+
 
 

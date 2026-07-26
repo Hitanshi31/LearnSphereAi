@@ -1,10 +1,15 @@
 import json
+import os
 import sys
 import urllib.request
 from urllib.error import HTTPError
 
-API_KEY = "AIzaSyBcPaosBA7vyLO0kp4Oe5B2nnEkeTVaYok"
-MODEL = "gemini-2.5-flash"
+API_KEY = os.getenv("LEARN_SPHERE_GEMINI_API_KEY", "")
+MODEL = os.getenv("LEARN_SPHERE_GEMINI_MODEL", "gemini-2.5-flash")
+
+if not API_KEY:
+    print("[SKIP] LEARN_SPHERE_GEMINI_API_KEY environment variable not set.")
+    sys.exit(0)
 
 endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={API_KEY}"
 payload = json.dumps({

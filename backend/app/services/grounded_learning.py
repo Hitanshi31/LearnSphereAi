@@ -32,9 +32,35 @@ def _clean_json_response(raw_text: str) -> str:
 
 def _extract_real_document_concepts(sources: list[SourceChunk]) -> tuple[str, list[str], list[str]]:
     """Extract real domain terms, clean sentences, and document subject directly from uploaded file content."""
+def _clean_concept_label(text: str) -> str:
+    """Clean and sanitize raw extracted concepts into crisp 1-3 word domain terms."""
+    cleaned = re.sub(r'["\[\](){}:;,.?!]', '', text).strip()
+    words = cleaned.split()
+
+    trailing_stops = {
+        "is", "are", "the", "a", "an", "where", "which", "that", "of", "in", "for", "and",
+        "to", "with", "foundational", "principle", "by", "from", "at", "on", "into", "can",
+        "be", "or", "as", "such", "this", "these", "when", "how", "what", "why", "structure",
+        "defined", "described", "used", "made", "creates", "shows", "form", "forms"
+    }
+
+    while words and words[-1].lower() in trailing_stops:
+        words.pop()
+
+    while words and words[0].lower() in trailing_stops:
+        words.pop(0)
+
+    if len(words) > 3:
+        words = words[:3]
+
+    result = " ".join(words).title().strip()
+    return result if len(result) >= 3 else text.strip().title()
+
+
+def _extract_real_document_concepts(sources: list[SourceChunk]) -> tuple[str, list[str], list[str]]:
+    """Extract clean 1-3 word domain terms and key sentences from source text chunks."""
     full_text = " ".join(s.text for s in sources)
 
-    # Filter out common document metadata headers and noise phrases
     cleaned_text = re.sub(
         r'(?i)(hands-on|chemistry guide|middle & high school|study & lab-companion|page \d+|source \d+|what\'s inside|est\. time|\d+ min|lesson plan|table of contents)',
         '',
@@ -43,7 +69,6 @@ def _extract_real_document_concepts(sources: list[SourceChunk]) -> tuple[str, li
 
     sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', cleaned_text) if len(s.strip()) > 25]
 
-    # Extract capitalized technical/domain terms or key concepts
     raw_concepts = re.findall(
         r'\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*|\b(?:pH scale|litmus paper|hydrogen ions|hydroxide ions|acid|base|alkali|neutralization|superposition|qubit|decoherence|entanglement)\b)\b',
         cleaned_text,
@@ -61,19 +86,23 @@ def _extract_real_document_concepts(sources: list[SourceChunk]) -> tuple[str, li
     unique_concepts = []
     seen = set()
     for c in raw_concepts:
-        norm = re.sub(r'[^a-zA-Z0-9\s]', '', c).strip()
-        if not norm or len(norm) <= 2:
+        cleaned_term = _clean_concept_label(c)
+        if not cleaned_term or len(cleaned_term) <= 2:
             continue
-        words = norm.lower().split()
+        words = cleaned_term.lower().split()
         if all(w in stop_list for w in words):
             continue
-        if norm.lower() not in seen:
-            seen.add(norm.lower())
-            unique_concepts.append(norm.title())
+        if cleaned_term.lower() not in seen:
+            seen.add(cleaned_term.lower())
+            unique_concepts.append(cleaned_term)
 
     if not unique_concepts:
         nouns = re.findall(r'\b[A-Za-z]{4,}\b', cleaned_text)
-        unique_concepts = [n.capitalize() for n in nouns if n.lower() not in stop_list][:8]
+        for n in nouns:
+            term = _clean_concept_label(n)
+            if term.lower() not in stop_list and term.lower() not in seen:
+                seen.add(term.lower())
+                unique_concepts.append(term)
 
     main_topic = unique_concepts[0] if unique_concepts else "Study Material"
     return main_topic, unique_concepts, sentences
@@ -121,7 +150,7 @@ def _generate_document_grounded_visual(sources: list[SourceChunk]) -> dict:
 
     # Root Node (Main Domain Topic from File)
     root_id = "N1"
-    root_label = re.sub(r'["\[\](){}]', '', main_topic).strip()
+    root_label = _clean_concept_label(main_topic)
     nodes.append({
         "id": root_id,
         "label": root_label,
@@ -133,9 +162,10 @@ def _generate_document_grounded_visual(sources: list[SourceChunk]) -> dict:
     # Domain specific relationship verbs
     rel_verbs = ["releases", "measures", "reacts with", "produces", "transforms into", "depends on", "defines"]
 
+    prerequisites = []
     for i in range(1, len(real_nodes)):
         node_id = f"N{i+1}"
-        term_label = re.sub(r'["\[\](){}]', '', real_nodes[i]).strip()
+        term_label = _clean_concept_label(real_nodes[i])
         summary_text = sentences[i % len(sentences)] if sentences else f"Key concept related to {term_label}."
         node_type = "process" if i <= 3 else "outcome" if i >= 5 else "definition"
 
@@ -156,11 +186,18 @@ def _generate_document_grounded_visual(sources: list[SourceChunk]) -> dict:
             verb = rel_verbs[i % len(rel_verbs)]
 
         lines.append(f'  {parent_id} -->|{verb}| {node_id}')
+        prerequisites.append({
+            "source_concept_id": parent_id,
+            "target_concept_id": node_id,
+            "relationship": verb,
+            "confidence": 0.95
+        })
 
     return {
         "title": f"Concept Map: {root_label}",
         "mermaid_code": "\n".join(lines),
         "concept_nodes": nodes,
+        "prerequisites": prerequisites,
     }
 
 
@@ -587,6 +624,18 @@ class GroundedStudyService:
                 if not code.startswith("graph ") and not code.startswith("flowchart "):
                     code = f"graph TD\n{code}"
                 parsed["mermaid_code"] = code
+
+                if "prerequisites" not in parsed or not parsed["prerequisites"]:
+                    prereqs = []
+                    matches = re.findall(r'([A-Za-z0-9_-]+)\s*-->\|([^|]+)\|\s*([A-Za-z0-9_-]+)', code)
+                    for src, rel, tgt in matches:
+                        prereqs.append({
+                            "source_concept_id": src,
+                            "target_concept_id": tgt,
+                            "relationship": rel.strip(),
+                            "confidence": 0.95
+                        })
+                    parsed["prerequisites"] = prereqs
             return parsed
         except Exception as err:
             print("Visual explainer fallback:", err)

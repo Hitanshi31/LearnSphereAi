@@ -33,11 +33,19 @@ from .schemas import (
     YoutubeIngestResponse,
     AudioNarrationResponse,
     AudioSection,
+    XRayDiagnoseRequest,
+    XRayDiagnosisResponse,
+    XRayProbeRequest,
+    XRayProbeResponse,
+    XRayReturnVerifyRequest,
+    XRayReturnVerifyResponse,
+    ReadinessReportResponse,
 )
 from .services.document_processor import PdfProcessor
 from .services.grounded_learning import GeminiClient, GroundedStudyService, SourceChunk, VectorIndex
 from .services.learning_profile import LearningProfileStore, MisconceptionDetector
 from .services.youtube_processor import YouTubeProcessor
+from .services.knowledge_xray import KnowledgeXRayEngine
 
 settings = get_settings()
 repository = DocumentRepository()
@@ -47,6 +55,7 @@ gemini_client = GeminiClient(settings)
 study_service = GroundedStudyService(VectorIndex(settings), gemini_client)
 profile_store = LearningProfileStore()
 misconception_detector = MisconceptionDetector(gemini_client)
+xray_engine = KnowledgeXRayEngine(study_service, profile_store, misconception_detector)
 
 
 # ------------------------------------------------------------------ #
@@ -477,4 +486,49 @@ def get_audio_narration(document_id: str) -> AudioNarrationResponse:
         estimated_total_minutes=round(total_duration / 60.0, 1),
         sections=sections
     )
+
+
+# ------------------------------------------------------------------ #
+# Knowledge X-Ray Diagnostic Engine Endpoints
+# ------------------------------------------------------------------ #
+
+@app.post("/api/v1/xray/diagnose", response_model=XRayDiagnosisResponse)
+def xray_diagnose(request: XRayDiagnoseRequest) -> XRayDiagnosisResponse:
+    """Initiate Knowledge X-Ray investigation when a student fails a concept question."""
+    try:
+        return xray_engine.diagnose_failed_concept(
+            learner_id=request.learner_id,
+            document_id=request.document_id,
+            failed_concept_name=request.failed_concept
+        )
+    except Exception as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+
+@app.post("/api/v1/xray/probe", response_model=XRayProbeResponse)
+def xray_evaluate_probe(request: XRayProbeRequest) -> XRayProbeResponse:
+    """Evaluate targeted micro-probe answer and confirm/rule out the root knowledge gap."""
+    try:
+        return xray_engine.evaluate_micro_probe(request)
+    except Exception as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+
+@app.post("/api/v1/xray/return-verify", response_model=XRayReturnVerifyResponse)
+def xray_verify_original_concept(request: XRayReturnVerifyRequest) -> XRayReturnVerifyResponse:
+    """Close the causal educational loop: re-test original concept after root prerequisite repair."""
+    try:
+        return xray_engine.verify_original_concept(request)
+    except Exception as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+
+@app.get("/api/v1/xray/readiness/{document_id}", response_model=ReadinessReportResponse)
+def xray_readiness_scan(document_id: str, learner_id: str = "alex") -> ReadinessReportResponse:
+    """Readiness X-Ray pre-flight scanner: assesses prerequisite readiness for a document."""
+    try:
+        return xray_engine.scan_material_readiness(learner_id=learner_id, document_id=document_id)
+    except Exception as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
 
