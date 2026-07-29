@@ -109,29 +109,54 @@ def _extract_real_document_concepts(sources: list[SourceChunk]) -> tuple[str, li
 
 
 def _generate_document_grounded_quiz(sources: list[SourceChunk]) -> list[QuizQuestion]:
-    """Generate quiz questions grounded strictly in the source text when AI JSON parsing fails."""
+    """Generate intelligent quiz questions grounded strictly in document text when AI API is unavailable."""
     main_topic, valid_terms, sentences = _extract_real_document_concepts(sources)
     citations = [s.citation() for s in sources[:6]]
     questions = []
 
-    for idx in range(min(5, max(3, len(sentences)))):
-        sentence = sentences[idx % len(sentences)]
-        term = valid_terms[idx % len(valid_terms)] if valid_terms else f"Subject Aspect {idx+1}"
+    if not sentences:
+        sentences = [f"{main_topic} plays a central role in this study material."]
+
+    num_q = min(5, len(sentences))
+    for idx in range(num_q):
+        curr_sentence = sentences[idx]
+        term = valid_terms[idx % len(valid_terms)] if valid_terms else main_topic
         chunk = sources[idx % len(sources)]
 
-        q_text = f"Based on Page {chunk.page_number} of your uploaded material, which statement correctly describes '{term}'?"
-        correct = sentence[:140] + ("..." if len(sentence) > 140 else "")
-        wrong1 = f"It operates independently without any relation to {term}."
-        wrong2 = f"This aspect is explicitly excluded from the document's theoretical scope."
-        wrong3 = f"It is described as a static variable with zero impact on the system."
+        q_text = f"According to the document (Page {chunk.page_number}), which statement regarding '{term}' is accurate?"
+        correct_ans = curr_sentence[:150].strip()
+        if not correct_ans.endswith('.'):
+            correct_ans += "..."
 
+        # Generate realistic distractors using other sentences from the document
+        other_sentences = [s[:140].strip() for i, s in enumerate(sentences) if i != idx]
+        
+        distractors = []
+        for other in other_sentences:
+            if len(distractors) >= 3:
+                break
+            distractor = f"It refers specifically to how {other.lower()}"
+            if distractor not in distractors:
+                distractors.append(distractor)
+
+        fallback_distractors = [
+            f"It operates independently without interacting with {term}.",
+            f"It is defined as a constant benchmark with no variation across states.",
+            f"It represents an auxiliary metric not covered in the primary analysis.",
+        ]
+        for fd in fallback_distractors:
+            if len(distractors) < 3 and fd not in distractors:
+                distractors.append(fd)
+
+        choices = [distractors[0], correct_ans, distractors[1], distractors[2]]
+        
         questions.append(
             QuizQuestion(
                 id=f"q{idx+1}",
                 question=q_text,
-                choices=[wrong1, correct, wrong2, wrong3],
+                choices=choices,
                 answer_index=1,
-                explanation=f"Directly supported by Page {chunk.page_number} of your document: '{sentence}'",
+                explanation=f"Grounded directly in Page {chunk.page_number}: '{curr_sentence}'",
                 citations=citations,
             )
         )
@@ -142,8 +167,8 @@ def _generate_document_grounded_visual(sources: list[SourceChunk]) -> dict:
     """Generate a rich, multi-node concept map strictly using actual domain terms and relationships from the file."""
     main_topic, concepts, sentences = _extract_real_document_concepts(sources)
 
-    # Pick real domain terms extracted directly from the uploaded file
-    real_nodes = concepts[:7] if len(concepts) >= 3 else [main_topic, "Core Mechanism", "Key Process"]
+    # Pick up to 10 real domain terms extracted directly from the uploaded file
+    real_nodes = concepts[:10] if len(concepts) >= 3 else [main_topic, "Core Mechanism", "Key Process", "Theoretical Model", "Practical Application"]
 
     nodes = []
     lines = ["graph TD"]
@@ -154,35 +179,41 @@ def _generate_document_grounded_visual(sources: list[SourceChunk]) -> dict:
     nodes.append({
         "id": root_id,
         "label": root_label,
-        "summary": sentences[0][:160] if sentences else f"Central topic of {root_label}.",
+        "summary": sentences[0][:180] if sentences else f"Central topic of {root_label}.",
         "type": "core",
     })
     lines.append(f'  {root_id}["{root_label}"]')
 
-    # Domain specific relationship verbs
-    rel_verbs = ["releases", "measures", "reacts with", "produces", "transforms into", "depends on", "defines"]
+    # Contextual relationship verbs
+    rel_verbs = ["defines", "governs", "produces", "transforms into", "depends on", "measures", "regulates", "applies to", "interacts with"]
 
     prerequisites = []
     for i in range(1, len(real_nodes)):
         node_id = f"N{i+1}"
         term_label = _clean_concept_label(real_nodes[i])
-        summary_text = sentences[i % len(sentences)] if sentences else f"Key concept related to {term_label}."
-        node_type = "process" if i <= 3 else "outcome" if i >= 5 else "definition"
+        
+        # Find sentence containing this term for rich summary
+        matching_sentence = next((s for s in sentences if term_label.lower() in s.lower()), None)
+        summary_text = matching_sentence[:180] if matching_sentence else (sentences[i % len(sentences)][:180] if sentences else f"Key concept related to {term_label}.")
+        node_type = "core" if i <= 2 else "process" if i <= 5 else "outcome" if i >= 8 else "definition"
 
         nodes.append({
             "id": node_id,
             "label": term_label,
-            "summary": summary_text[:160],
+            "summary": summary_text,
             "type": node_type,
         })
         lines.append(f'  {node_id}["{term_label}"]')
 
-        # Connect in a branching network structure
-        if i <= 2:
+        # Multi-tiered tree branching
+        if i <= 3:
             parent_id = root_id
             verb = rel_verbs[(i - 1) % len(rel_verbs)]
+        elif i <= 6:
+            parent_id = f"N{(i % 3) + 2}"
+            verb = rel_verbs[i % len(rel_verbs)]
         else:
-            parent_id = f"N{(i % 2) + 2}"
+            parent_id = f"N{(i % 4) + 3}"
             verb = rel_verbs[i % len(rel_verbs)]
 
         lines.append(f'  {parent_id} -->|{verb}| {node_id}')
@@ -194,7 +225,7 @@ def _generate_document_grounded_visual(sources: list[SourceChunk]) -> dict:
         })
 
     return {
-        "title": f"Concept Map: {root_label}",
+        "title": f"Concept Architecture: {root_label}",
         "mermaid_code": "\n".join(lines),
         "concept_nodes": nodes,
         "prerequisites": prerequisites,
@@ -388,8 +419,8 @@ class GeminiClient:
 
         candidate_models = [
             self.settings.gemini_model,
+            "gemini-2.0-flash",
             "gemini-1.5-flash",
-            "gemini-2.0-flash-exp",
             "gemini-1.5-pro",
         ]
         models_to_try = list(dict.fromkeys([m for m in candidate_models if m]))
@@ -409,7 +440,14 @@ class GeminiClient:
                     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                     if text:
                         return text
-            except (HTTPError, URLError, KeyError, IndexError, TypeError) as error:
+            except HTTPError as http_err:
+                print(f"[GeminiClient] Gemini model '{model}' HTTP {http_err.code} ({http_err.reason}).")
+                if http_err.code == 429:
+                    import time
+                    time.sleep(1.5)  # Backoff before fallback
+                last_error = http_err
+                continue
+            except (URLError, KeyError, IndexError, TypeError) as error:
                 print(f"[GeminiClient] Gemini model '{model}' failed ({error}). Trying next...")
                 last_error = error
                 continue

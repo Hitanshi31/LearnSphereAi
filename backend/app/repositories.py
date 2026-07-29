@@ -35,6 +35,7 @@ class DocumentRepository:
     def _load(self) -> None:
         """Load persisted documents from disk if available."""
         if not _PERSIST_FILE.exists():
+            self._seed_default_documents()
             return
         try:
             raw = json.loads(_PERSIST_FILE.read_text(encoding="utf-8"))
@@ -46,9 +47,6 @@ class DocumentRepository:
                     self._files[doc_id] = path_str
         except Exception as err:
             print(f"[DocumentRepository] Could not load persisted data: {err}")
-
-        if not self._documents:
-            self._seed_default_documents()
 
     def _seed_default_documents(self) -> None:
         """Seed rich academic materials so hackathon judges can test study tools immediately."""
@@ -217,3 +215,9 @@ class DocumentRepository:
                 DocumentSummary(**document.model_dump(exclude={"chunks"}))
                 for document in sorted(self._documents.values(), key=lambda d: d.created_at, reverse=True)
             ]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._documents.clear()
+            self._files.clear()
+            self._save()

@@ -113,6 +113,11 @@ class LearningProfileStore:
         except Exception as err:
             print(f"[LearningProfileStore] Could not save profiles: {err}")
 
+    def reset(self) -> None:
+        """Clear all learner profiles and update disk persistence."""
+        self._learners.clear()
+        self._save()
+
     def _seed_default_profile(self, learner_id: str) -> None:
         learner = self._learners[learner_id]
 

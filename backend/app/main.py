@@ -96,6 +96,31 @@ def list_documents() -> list[DocumentSummary]:
     return repository.list()
 
 
+@app.delete("/api/v1/documents")
+def delete_all_documents() -> dict[str, str]:
+    import shutil
+    repository.clear()
+    profile_store.reset()
+    for data_dir in [Path("./data"), Path("./backend/data")]:
+        uploads_dir = data_dir / "uploads"
+        if uploads_dir.exists():
+            for item in uploads_dir.iterdir():
+                if item.is_file():
+                    try:
+                        item.unlink()
+                    except Exception:
+                        pass
+                elif item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+    try:
+        if hasattr(study_service.vector_index, "_get_collection"):
+            coll = study_service.vector_index._get_collection()
+            coll.delete()
+    except Exception as err:
+        print(f"[Delete] Notice deleting Chroma collection: {err}")
+    return {"status": "ok", "message": "All documents and materials deleted successfully"}
+
+
 @app.get("/api/v1/documents/{document_id}", response_model=DocumentDetail)
 def get_document(document_id: str) -> DocumentDetail:
     document = repository.get(document_id)

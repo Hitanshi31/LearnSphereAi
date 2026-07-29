@@ -1,29 +1,4 @@
 {
-  "documents": [
-    {
-      "id": "yt-test9999",
-      "filename": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
-      "status": "ready",
-      "page_count": 1,
-      "chunk_count": 2,
-      "extracted_characters": 2104,
-      "created_at": "2026-07-25T06:59:47.107118Z",
-      "error": null,
-      "chunks": [
-        {
-          "id": "yt-test9999:yt:0",
-          "page_number": 1,
-          "text": "[00:01] [\u266a\u266a\u266a] \u266a We're no strangers to love \u266a \u266a You know the rules and so do I \u266a \u266a A full commitment's what I'm thinking of \u266a \u266a You wouldn't get this from any other guy \u266a \u266a I just wanna tell you how I'm feeling \u266a \u266a Gotta make you understand \u266a \u266a Never gonna give you up \u266a \u266a Never gonna let you down \u266a \u266a Never gonna run around and desert you \u266a \u266a Never gonna make you cry \u266a \u266a Never gonna say goodbye \u266a \u266a Never gonna tell a lie and hurt you \u266a \u266a We've known each other for so long \u266a \u266a Your heart's been aching but you're too shy to say it \u266a \u266a Inside we both know what's been going \u266a \u266a We know the game and we're gonna play it \u266a \u266a And if you ask me how I'm feeling \u266a \u266a Don't tell me you're too blind to see \u266a \u266a Never gonna give you up \u266a \u266a Never gonna let you down \u266a \u266a Never gonna run around and desert you \u266a \u266a Never gonna make you cry \u266a \u266a Never gonna say goodbye \u266a \u266a Never gonna tell a lie and hurt you \u266a \u266a Never gonna give you up \u266a \u266a Never gonna let you down \u266a \u266a Never gonna run around and desert you \u266a \u266a Never gonna make you cry \u266a \u266a Never gonna say goodbye \u266a \u266a Never gonna tell a lie and hurt you \u266a \u266a (Ooh, give you up) \u266a \u266a (Ooh, give you up) \u266a \u266a Never gonna give, never gonna give \u266a \u266a (Give you up) \u266a \u266a Never gonna give, never gonna give \u266a \u266a (Give you up) \u266a \u266a We've known each other for so long \u266a",
-          "word_count": 301
-        },
-        {
-          "id": "yt-test9999:yt:1",
-          "page_number": 2,
-          "text": "[02:21] \u266a Your heart's been aching but you're too shy to say it \u266a \u266a Inside we both know what's been going \u266a \u266a We know the game and we're gonna play it \u266a \u266a I just wanna tell you how I'm feeling \u266a \u266a Gotta make you understand \u266a \u266a Never gonna give you up \u266a \u266a Never gonna let you down \u266a \u266a Never gonna run around and desert you \u266a \u266a Never gonna make you cry \u266a \u266a Never gonna say goodbye \u266a \u266a Never gonna tell a lie and hurt you \u266a \u266a Never gonna give you up \u266a \u266a Never gonna let you down \u266a \u266a Never gonna run around and desert you \u266a \u266a Never gonna make you cry \u266a \u266a Never gonna say goodbye \u266a \u266a Never gonna tell a lie and hurt you \u266a \u266a Never gonna give you up \u266a \u266a Never gonna let you down \u266a \u266a Never gonna run around and desert you \u266a \u266a Never gonna make you cry \u266a \u266a Never gonna say goodbye \u266a \u266a Never gonna tell a lie and hurt you \u266a",
-          "word_count": 188
-        }
-      ]
-    }
-  ],
+  "documents": [],
   "files": {}
 }
